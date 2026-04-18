@@ -225,3 +225,74 @@ export async function putFabricIntent(payload: {content?: any; raw?: string}): P
   });
   return parseOrThrow(r);
 }
+
+// ─── Inventory ──────────────────────────────────────────────
+
+export type InventoryDevice = {
+  name: string;
+  mgmt_ip: string;
+  tags: string[];
+  username: string | null;
+  has_password: boolean;
+};
+
+export type InventoryView = {
+  path: string;
+  source: "file" | "hardcoded" | "explicit" | string;
+  switches: InventoryDevice[];
+};
+
+export type InventoryAddPayload = {
+  name: string;
+  mgmt_ip: string;
+  tags?: string[];
+  username?: string | null;
+  password?: string | null;
+};
+
+export type ProbeResult = {
+  mgmt_ip: string;
+  restconf: boolean;
+  ssh: boolean;
+  errors: string[];
+};
+
+export async function getInventory(): Promise<InventoryView> {
+  return parseOrThrow(await fetch(`${API}/inventory`));
+}
+
+export async function addInventorySwitch(payload: InventoryAddPayload): Promise<InventoryView> {
+  const r = await fetch(`${API}/inventory/switches`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  return parseOrThrow(r);
+}
+
+export async function deleteInventorySwitch(mgmtIp: string): Promise<InventoryView> {
+  const r = await fetch(`${API}/inventory/switches/${encodeURIComponent(mgmtIp)}`, {
+    method: "DELETE",
+  });
+  return parseOrThrow(r);
+}
+
+export async function probeInventorySwitch(payload: {
+  mgmt_ip: string;
+  username?: string | null;
+  password?: string | null;
+}): Promise<ProbeResult> {
+  const r = await fetch(`${API}/inventory/probe`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  return parseOrThrow(r);
+}
+
+export async function discoverFabric(
+  seedIp: string, maxHops = 2,
+): Promise<any> {
+  // Calls the `discover_fabric_from_seed` tool via /invoke.
+  return invoke("discover_fabric_from_seed", {seed_switch_ip: seedIp, max_hops: maxHops});
+}

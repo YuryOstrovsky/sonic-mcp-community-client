@@ -584,6 +584,74 @@ async def patch_settings(req: SettingsPatch) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------
+# Fabric inventory — proxies the server's /inventory* endpoints so the
+# web client can manage the switch list (add / remove / probe) without
+# SSHing in or editing inventory.json by hand.
+# ---------------------------------------------------------------
+
+def _unwrap_or_raise(r: httpx.Response) -> Dict[str, Any]:
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail") or r.text
+        except Exception:
+            detail = r.text
+        raise HTTPException(status_code=r.status_code, detail=detail)
+    return r.json()
+
+
+class _InventoryDeviceReq(BaseModel):
+    name: str
+    mgmt_ip: str
+    tags: List[str] = []
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+class _InventoryPutReq(BaseModel):
+    switches: List[_InventoryDeviceReq]
+
+
+class _InventoryProbeReq(BaseModel):
+    mgmt_ip: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+@app.get("/api/inventory")
+async def inventory_get() -> Dict[str, Any]:
+    r = await _mcp_get("/inventory")
+    return _unwrap_or_raise(r)
+
+
+@app.put("/api/inventory")
+async def inventory_put(req: _InventoryPutReq) -> Dict[str, Any]:
+    body = {"switches": [s.model_dump() for s in req.switches]}
+    r = await _mcp_put("/inventory", json_body=body)
+    return _unwrap_or_raise(r)
+
+
+@app.post("/api/inventory/switches")
+async def inventory_add(req: _InventoryDeviceReq) -> Dict[str, Any]:
+    r = await _mcp_post("/inventory/switches", json_body=req.model_dump())
+    return _unwrap_or_raise(r)
+
+
+@app.delete("/api/inventory/switches/{mgmt_ip}")
+async def inventory_del(mgmt_ip: str) -> Dict[str, Any]:
+    try:
+        r = await _client().delete(f"/inventory/switches/{mgmt_ip}")
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"MCP upstream error: {e}") from e
+    return _unwrap_or_raise(r)
+
+
+@app.post("/api/inventory/probe")
+async def inventory_probe(req: _InventoryProbeReq) -> Dict[str, Any]:
+    r = await _mcp_post("/inventory/probe", json_body=req.model_dump())
+    return _unwrap_or_raise(r)
+
+
+# ---------------------------------------------------------------
 # Fabric intent file editor — proxies GET/PUT /fabric/intent on the MCP
 # server so the web client can maintain the intent without SSHing in.
 # ---------------------------------------------------------------

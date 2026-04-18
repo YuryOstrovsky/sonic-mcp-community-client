@@ -8,7 +8,14 @@ import {ChevronDown} from "lucide-react";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 import {cn} from "./lib/cn";
 import {ErrorBanner, Loading} from "./shared";
-import {getSettings, patchSettings, getFabricIntent, putFabricIntent, type SettingsView as S, type FabricIntentView} from "./lib/api";
+import {
+  getSettings, patchSettings,
+  getFabricIntent, putFabricIntent,
+  getInventory, addInventorySwitch, deleteInventorySwitch, probeInventorySwitch, discoverFabric,
+  type SettingsView as S, type FabricIntentView,
+  type InventoryView, type ProbeResult,
+} from "./lib/api";
+import {notify} from "./lib/notify";
 
 // Curated Ollama model presets. "recommended" marks the one we've tested for
 // JSON tool-selection (small + reliable on a CPU-only lab host).
@@ -342,6 +349,9 @@ curl http://127.0.0.1:11434/api/tags
         </p>
       </Section>
 
+      {/* Fabric inventory */}
+      <FabricInventorySection />
+
       {/* Fabric intent editor */}
       <FabricIntentSection />
 
@@ -639,3 +649,240 @@ function ProviderRadio(props: {
 
 // ─── Shared input class ───────────────────────────────────────
 const INPUT_CLS = "w-full rounded border border-white/10 bg-[#0d1220] px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-white/20";
+
+// ─── Fabric Inventory section ───────────────────────────────
+//
+// Lets operators add/remove/probe switches from the web UI without
+// editing `sonic/inventory.py` or bouncing the container. Backed by the
+// server's /inventory endpoints; writes go straight to
+// config/inventory.json (live-reloaded by the server).
+
+function FabricInventorySection() {
+  const [inv, setInv] = useState<InventoryView | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [probing, setProbing] = useState<Record<string, boolean>>({});
+  const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
+
+  // Add-form state
+  const [form, setForm] = useState({name: "", mgmt_ip: "", tags: "", username: "", password: ""});
+
+  // Discovery state
+  const [discoverSeed, setDiscoverSeed] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+
+  async function refresh() {
+    setErr(null);
+    try { setInv(await getInventory()); }
+    catch (e: any) { setErr(e?.message ?? String(e)); }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function addSwitch() {
+    if (!form.mgmt_ip.trim()) { notify.err("mgmt_ip is required"); return; }
+    setBusy(true);
+    try {
+      const next = await addInventorySwitch({
+        name: form.name.trim() || form.mgmt_ip.trim(),
+        mgmt_ip: form.mgmt_ip.trim(),
+        tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        username: form.username.trim() || undefined,
+        password: form.password || undefined,
+      });
+      setInv(next);
+      setForm({name: "", mgmt_ip: "", tags: "", username: "", password: ""});
+      notify.ok(`added ${form.mgmt_ip}`);
+    } catch (e: any) {
+      notify.err("add failed", e?.message ?? String(e));
+    } finally { setBusy(false); }
+  }
+
+  async function removeSwitch(ip: string) {
+    if (!confirm(`Remove ${ip} from inventory?`)) return;
+    setBusy(true);
+    try {
+      const next = await deleteInventorySwitch(ip);
+      setInv(next);
+      setProbeResults((p) => { const c = {...p}; delete c[ip]; return c; });
+      notify.ok(`removed ${ip}`);
+    } catch (e: any) {
+      notify.err("remove failed", e?.message ?? String(e));
+    } finally { setBusy(false); }
+  }
+
+  async function probeOne(ip: string) {
+    setProbing((p) => ({...p, [ip]: true}));
+    try {
+      const res = await probeInventorySwitch({mgmt_ip: ip});
+      setProbeResults((p) => ({...p, [ip]: res}));
+      if (res.restconf && res.ssh) notify.ok(`${ip} reachable on both transports`);
+      else if (res.restconf || res.ssh) notify.warn(`${ip} partial — ${res.restconf ? "RESTCONF" : "SSH"} only`);
+      else notify.err(`${ip} unreachable`, res.errors.join("; ") || undefined);
+    } catch (e: any) {
+      notify.err("probe failed", e?.message ?? String(e));
+    } finally {
+      setProbing((p) => { const c = {...p}; delete c[ip]; return c; });
+    }
+  }
+
+  async function runDiscovery() {
+    if (!discoverSeed.trim()) { notify.err("pick a seed switch first"); return; }
+    setDiscovering(true);
+    try {
+      const env = await discoverFabric(discoverSeed.trim(), 2);
+      const payload = env?.result?.payload ?? {};
+      const proposals = payload.proposed_additions ?? [];
+      if (proposals.length === 0) {
+        notify.info("no new switches found", "LLDP RX is often empty on SONiC VS — try real hardware.");
+      } else {
+        const list = proposals.map((p: any) => `${p.name} (${p.mgmt_ip})`).join(", ");
+        if (confirm(`Found ${proposals.length} switch(es): ${list}\n\nAdd them all to inventory?`)) {
+          for (const p of proposals) {
+            await addInventorySwitch({name: p.name, mgmt_ip: p.mgmt_ip, tags: p.tags ?? ["discovered"]});
+          }
+          await refresh();
+          notify.ok(`added ${proposals.length} discovered switch(es)`);
+        }
+      }
+    } catch (e: any) {
+      notify.err("discovery failed", e?.message ?? String(e));
+    } finally { setDiscovering(false); }
+  }
+
+  return (
+    <Section
+      title="Fabric inventory"
+      badge={inv ? <Chip tone={inv.source === "file" ? "good" : "neutral"}>{inv.source}</Chip> : <Chip tone="neutral">loading</Chip>}
+    >
+      <p className="mb-4 text-sm text-gray-400">
+        The list of switches this MCP server talks to. Changes persist to
+        <code className="mx-1 rounded bg-white/[0.04] px-1.5 py-0.5 text-xs">{inv?.path ?? "config/inventory.json"}</code>
+        and reload live — no server restart.
+      </p>
+
+      {err && <ErrorBanner>{err}</ErrorBanner>}
+
+      {/* Switch list */}
+      {inv && (
+        <div className="mb-5 overflow-hidden rounded-lg border border-white/[0.08]">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[#0d1220] text-[11px] uppercase tracking-wider text-gray-500">
+              <tr>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Mgmt IP</th>
+                <th className="px-3 py-2">Tags</th>
+                <th className="px-3 py-2">Creds</th>
+                <th className="px-3 py-2">Last probe</th>
+                <th className="px-3 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inv.switches.length === 0 ? (
+                <tr><td colSpan={6} className="p-4 text-center text-xs text-gray-500">No switches configured.</td></tr>
+              ) : inv.switches.map((d) => {
+                const pr = probeResults[d.mgmt_ip];
+                return (
+                  <tr key={d.mgmt_ip} className="border-t border-white/[0.06]">
+                    <td className="px-3 py-2 font-semibold text-gray-100">{d.name}</td>
+                    <td className="px-3 py-2 font-mono text-gray-300">{d.mgmt_ip}</td>
+                    <td className="px-3 py-2 text-xs text-gray-400">{d.tags.join(" · ") || "—"}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {d.username || d.has_password
+                        ? <span className="text-gray-300">override set</span>
+                        : <span className="text-gray-500">env defaults</span>}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {pr
+                        ? <ProbeBadge result={pr} />
+                        : <span className="text-gray-500">—</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => probeOne(d.mgmt_ip)}
+                        disabled={!!probing[d.mgmt_ip]}
+                        className="mr-2 rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-gray-300 hover:bg-white/[0.08] disabled:opacity-50"
+                      >{probing[d.mgmt_ip] ? "probing…" : "probe"}</button>
+                      <button
+                        onClick={() => removeSwitch(d.mgmt_ip)}
+                        disabled={busy}
+                        className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >remove</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add form */}
+      <div className="mb-5 rounded-lg border border-white/[0.08] bg-[#0d1220] p-4">
+        <div className="mb-3 text-xs uppercase tracking-wider text-gray-500">Add / update a switch</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name" id="inv-name">
+            <input id="inv-name" className={INPUT_CLS}
+              placeholder="e.g. leaf-01 (falls back to mgmt_ip)"
+              value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} />
+          </Field>
+          <Field label="Management IP *" id="inv-ip">
+            <input id="inv-ip" className={INPUT_CLS}
+              placeholder="10.0.0.5"
+              value={form.mgmt_ip} onChange={(e) => setForm({...form, mgmt_ip: e.target.value})} />
+          </Field>
+          <Field label="Tags (comma-separated)" id="inv-tags">
+            <input id="inv-tags" className={INPUT_CLS}
+              placeholder="leaf, rack-3"
+              value={form.tags} onChange={(e) => setForm({...form, tags: e.target.value})} />
+          </Field>
+          <Field label="Username (optional override)" id="inv-user">
+            <input id="inv-user" className={INPUT_CLS}
+              placeholder="leave blank → SONIC_DEFAULT_USERNAME"
+              value={form.username} onChange={(e) => setForm({...form, username: e.target.value})} />
+          </Field>
+          <Field label="Password (optional override)" id="inv-pw">
+            <input id="inv-pw" type="password" className={INPUT_CLS}
+              placeholder="leave blank → SONIC_DEFAULT_PASSWORD"
+              value={form.password} onChange={(e) => setForm({...form, password: e.target.value})} />
+          </Field>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={addSwitch} disabled={busy || !form.mgmt_ip.trim()}
+            className="rounded bg-orange-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+          >{busy ? "…" : "Add switch"}</button>
+        </div>
+      </div>
+
+      {/* LLDP-seed discovery */}
+      <div className="rounded-lg border border-white/[0.08] bg-[#0d1220] p-4">
+        <div className="mb-3 text-xs uppercase tracking-wider text-gray-500">Discover via LLDP (seed walk)</div>
+        <p className="mb-3 text-xs text-gray-500">
+          Starts from an existing switch, reads its LLDP neighbors, resolves each management IP, and proposes additions.
+          Works best on real hardware — SONiC VS has known LLDP-RX issues.
+        </p>
+        <div className="flex items-center gap-2">
+          <select
+            value={discoverSeed} onChange={(e) => setDiscoverSeed(e.target.value)}
+            className="h-9 flex-1 rounded border border-white/10 bg-[#1a2332] px-3 text-sm text-gray-200"
+          >
+            <option value="">— pick a seed switch —</option>
+            {(inv?.switches ?? []).map((d) => (
+              <option key={d.mgmt_ip} value={d.mgmt_ip}>{d.name} ({d.mgmt_ip})</option>
+            ))}
+          </select>
+          <button
+            onClick={runDiscovery} disabled={discovering || !discoverSeed}
+            className="rounded border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-300 hover:bg-white/[0.08] disabled:opacity-50"
+          >{discovering ? "walking LLDP…" : "Discover"}</button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function ProbeBadge({result}: {result: ProbeResult}) {
+  if (result.restconf && result.ssh) return <Chip tone="good">ok</Chip>;
+  if (result.restconf || result.ssh) return <Chip tone="neutral">partial</Chip>;
+  return <Chip tone="neutral">down</Chip>;
+}
