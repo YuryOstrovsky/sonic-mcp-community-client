@@ -3,7 +3,7 @@
 Web UI + lightweight API backend for the [SONiC MCP Community Server](../sonic-mcp-community-server/).
 
 Read-only, no auth, community-grade. Designed to run alongside the server on a trusted-network host.
-Server repo : https://github.com/YuryOstrovsky/sonic-mcp-community-server
+Server repo: https://github.com/YuryOstrovsky/sonic-mcp-community-server
 
 ## Status
 
