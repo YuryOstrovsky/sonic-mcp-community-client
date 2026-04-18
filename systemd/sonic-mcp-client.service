@@ -1,0 +1,32 @@
+[Unit]
+Description=SONiC MCP Community Client — backend proxy + static UI
+# Documentation=  # (set when the GitHub repo is published)
+After=network-online.target sonic-mcp.service
+Wants=network-online.target
+# Soft dependency: we'd *like* the MCP server up first, but the client should
+# still boot and render an error banner if it isn't.
+
+[Service]
+Type=simple
+User=user01
+Group=user01
+WorkingDirectory=/home/user01/sonic-mcp-community-client/backend
+EnvironmentFile=-/home/user01/sonic-mcp-community-client/backend/.env
+ExecStart=/home/user01/sonic-mcp-community-client/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 5174
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=15
+KillSignal=SIGINT
+# Basic hardening — safe defaults for a lab service.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/user01/sonic-mcp-community-client
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sonic-mcp-client
+
+[Install]
+WantedBy=multi-user.target

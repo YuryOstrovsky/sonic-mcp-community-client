@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — aligned with Figma "Adjust widget colors" spec */
+:root{
+  --bg0: #1E2230;   /* app background */
+  --bg1: #2B3142;   /* cards / panels */
+  --border: #3A4458; /* subtle borders */
+  --text: #F8F8FB;
+  --accent: #8B8FD8; /* ingress / primary accent (muted lavender-blue) */
+  --accent-egress: #5B8A7D; /* egress / secondary accent (muted teal-green) */
+  --warn: #C17B4A;   /* high-traffic / warning (amber) */
+}
+
+html, body { height: 100%; }
+body{
+  margin: 0;
+  background: var(--bg0);
+  color: var(--text);
+  font-family: "Source Sans Pro", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+

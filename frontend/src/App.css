@@ -1,0 +1,44 @@
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Spin animation kept — useful for inline loading indicators. */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+/* Scrollbar styling — keep things consistent across the app */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 5px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+button {
+  font-family: inherit;
+}
+input, textarea, select {
+  font-family: inherit;
+}
