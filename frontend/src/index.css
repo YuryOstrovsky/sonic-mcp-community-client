@@ -2,22 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — aligned with Figma "Adjust widget colors" spec */
+/* Design tokens — aligned with Figma "Core_UI" dark navy scheme. */
 :root{
-  --bg0: #1E2230;   /* app background */
-  --bg1: #2B3142;   /* cards / panels */
-  --border: #3A4458; /* subtle borders */
-  --text: #F8F8FB;
-  --accent: #8B8FD8; /* ingress / primary accent (muted lavender-blue) */
-  --accent-egress: #5B8A7D; /* egress / secondary accent (muted teal-green) */
-  --warn: #C17B4A;   /* high-traffic / warning (amber) */
+  --bg0: #0a0e1a;       /* app background (deepest) */
+  --bg1: #0d1220;       /* sidebar / sub-panel */
+  --bg2: #1a2332;       /* card */
+  --bg3: #1d2738;       /* nested card / hover */
+  --bg4: #151b28;       /* code block / pre */
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.14);
+  --text: #e5e7eb;      /* gray-200 */
+  --text-muted: #9ca3af;/* gray-400 */
+  --text-dim: #6b7280;  /* gray-500 */
+  --accent: #3b82f6;    /* blue-500 (primary action) */
+  --accent-orange: #ea580c; /* orange-600 (run/save) */
+  --accent-egress: #5B8A7D;
+  --warn: #eab308;
+  --success: #22c55e;
+  --danger: #ef4444;
 }
 
-html, body { height: 100%; }
+html, body, #root { height: 100%; }
 body{
   margin: 0;
   background: var(--bg0);
   color: var(--text);
   font-family: "Source Sans Pro", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-size: 14px;
 }
 
+/* Thin scrollbar on dark panels */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 6px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+/* Collapsible animations (Radix). */
+@keyframes cols-down { from { height: 0 } to { height: var(--radix-collapsible-content-height) } }
+@keyframes cols-up   { from { height: var(--radix-collapsible-content-height) } to { height: 0 } }
+[data-state="open"].cols-anim { animation: cols-down 200ms ease-out; }
+[data-state="closed"].cols-anim { animation: cols-up 200ms ease-out; }

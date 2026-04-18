@@ -1,0 +1,55 @@
+# SONiC MCP Community Client — one-command deploy.
+#
+# Prerequisites on the host:
+#   1. The SONiC MCP Community Server is reachable (default port 8000).
+#      Edit MCP_BASE_URL in .env if it lives on a different host/port.
+#   2. Copy .env.example -> .env and tweak as needed.
+#
+# Run:
+#     docker compose up -d
+#     open http://<host>:5174/
+#
+# The client is a UI + thin proxy — it holds no device credentials and
+# no persistent state beyond settings.json (LLM prefs, optional API
+# keys). That file lives in ./data on the host so it survives rebuilds.
+
+services:
+  client:
+    # build: .
+    image: sonic-mcp-community-client:latest
+    container_name: sonic-mcp-client
+    restart: unless-stopped
+
+    env_file:
+      - .env
+    environment:
+      # If the server is on the same host machine (outside Docker), use
+      # host.docker.internal. For a server also in Docker on a shared
+      # network, set MCP_BASE_URL in .env to its container name:port.
+      - MCP_BASE_URL=${MCP_BASE_URL:-http://host.docker.internal:8000}
+
+    ports:
+      - "5174:5174"
+
+    volumes:
+      # Persistent settings.json (LLM provider, optional API keys).
+      # Mode 0600 is enforced by the backend when it writes the file.
+      - ./data:/app/backend/data
+
+    # Lets the container reach services bound to the host's localhost on
+    # platforms that don't resolve host.docker.internal by default (Linux).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5174/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp

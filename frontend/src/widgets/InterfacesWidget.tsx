@@ -3,8 +3,10 @@
  * Payload shape: { summary: {count, oper_up, filter, source}, interfaces: [...] }
  */
 
+import {displayName} from "../lib/state";
 import {Badge} from "../shared";
 import {type Column, Section, SummaryStrip, Table, UpDownPill, fmtNum} from "./common";
+import {RowActionsMenu, type RowAction} from "./RowActions";
 
 type Row = {
   name: string;
@@ -29,6 +31,35 @@ function cleanSpeed(v: any): string {
 export function InterfacesWidget({payload}: {payload: any}) {
   const summary = payload?.summary ?? {};
   const rows: Row[] = payload?.interfaces ?? [];
+  const switchIp: string | undefined = summary.switch_ip;
+  const switchAlias = switchIp ? displayName(switchIp) : "<switch>";
+
+  function actionsFor(r: Row): RowAction[] {
+    const isEth = /^Ethernet\d+$/.test(r.name);
+    return [
+      {
+        label: "Bring down (admin)",
+        tone: "warn",
+        prompt: () => isEth ? `shutdown ${r.name} on ${switchAlias}` : null,
+      },
+      {
+        label: "Bring up (admin)",
+        prompt: () => isEth ? `set ${r.name} up on ${switchAlias}` : null,
+      },
+      {
+        label: "Change MTU…",
+        prompt: () => isEth ? `set mtu of ${r.name} to 9100 on ${switchAlias}` : null,
+      },
+      {
+        label: "Set description…",
+        prompt: () => `set description ${r.name} "updated via MCP" on ${switchAlias}`,
+      },
+      {
+        label: "Clear counters",
+        prompt: () => `clear counters on ${switchAlias}`,
+      },
+    ];
+  }
 
   const adminUp = rows.filter((r) => String(r.admin_status ?? "").toUpperCase() === "UP").length;
   const operUp = summary.oper_up ?? rows.filter((r) => String(r.oper_status ?? "").toUpperCase() === "UP").length;
@@ -53,6 +84,7 @@ export function InterfacesWidget({payload}: {payload: any}) {
       return d > 0 ? <span style={{color: "#eab308"}}>{d.toLocaleString()}</span> : "0";
     }},
     {key: "descr", label: "Description", render: (r) => r.description || <span style={{opacity: 0.5}}>—</span>},
+    {key: "actions", label: "", width: "32px", render: (r) => <RowActionsMenu actions={actionsFor(r)} />},
   ];
 
   return (

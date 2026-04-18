@@ -198,3 +198,30 @@ export async function patchSettings(update: {
   });
   return parseOrThrow(r);
 }
+
+export type FabricIntentView = {
+  exists: boolean;
+  path: string;
+  content: any | null;
+  raw?: string;
+  size_bytes?: number;
+  parse_error?: string;
+  source?: "env" | "default";
+};
+
+export async function getFabricIntent(): Promise<FabricIntentView> {
+  return parseOrThrow(await fetch(`${API}/fabric-intent`));
+}
+
+export async function putFabricIntent(payload: {content?: any; raw?: string}): Promise<{
+  ok: boolean;
+  path: string;
+  size_bytes: number;
+}> {
+  const r = await fetch(`${API}/fabric-intent`, {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  return parseOrThrow(r);
+}

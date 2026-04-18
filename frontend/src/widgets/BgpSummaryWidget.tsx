@@ -5,8 +5,10 @@
  *            ipv6: {...same...} }
  */
 
+import {displayName} from "../lib/state";
 import {Badge, StatusPill} from "../shared";
 import {type Column, KvGrid, Section, SummaryStrip, Table, fmtNum} from "./common";
+import {RowActionsMenu, type RowAction} from "./RowActions";
 
 type Peer = {
   peer: string;
@@ -25,7 +27,28 @@ type Peer = {
   description?: string;
 };
 
-function PeerTable({peers}: {peers: Peer[]}) {
+function PeerTable({peers, switchAlias}: {peers: Peer[]; switchAlias: string}) {
+  function actionsFor(p: Peer): RowAction[] {
+    return [
+      {
+        label: p.established ? "Shut this peer (admin down)" : "Unshut this peer (admin up)",
+        tone: p.established ? "warn" : "default",
+        prompt: () => p.established
+          ? `shutdown bgp peer ${p.peer} on ${switchAlias}`
+          : `no shut bgp peer ${p.peer} on ${switchAlias}`,
+      },
+      {
+        label: "Force shut",
+        tone: "warn",
+        prompt: () => `shutdown bgp peer ${p.peer} on ${switchAlias}`,
+      },
+      {
+        label: "Force unshut",
+        prompt: () => `no shut bgp peer ${p.peer} on ${switchAlias}`,
+      },
+    ];
+  }
+
   const columns: Column<Peer>[] = [
     {key: "peer", label: "Peer", mono: true, width: "150px", render: (p) => <span style={{fontWeight: 600}}>{p.peer}</span>},
     {key: "state", label: "State", width: "110px", render: (p) => (
@@ -40,6 +63,7 @@ function PeerTable({peers}: {peers: Peer[]}) {
     {key: "msg", label: "Msgs rcvd/sent", width: "130px", align: "right", mono: true, render: (p) => `${fmtNum(p.msg_rcvd)}/${fmtNum(p.msg_sent)}`},
     {key: "flaps", label: "Up/Down", width: "90px", align: "right", mono: true, render: (p) => `${fmtNum(p.connections_established)}/${fmtNum(p.connections_dropped)}`},
     {key: "desc", label: "Description", render: (p) => p.description || "—"},
+    {key: "actions", label: "", width: "32px", render: (p) => <RowActionsMenu actions={actionsFor(p)} />},
   ];
 
   return (
@@ -54,7 +78,7 @@ function PeerTable({peers}: {peers: Peer[]}) {
   );
 }
 
-function AfiSection({title, afi}: {title: string; afi: any}) {
+function AfiSection({title, afi, switchAlias}: {title: string; afi: any; switchAlias: string}) {
   if (!afi || (!afi.router_id && !afi.peers?.length)) return null;
   const peers: Peer[] = afi.peers ?? [];
   const est = afi.established_count ?? 0;
@@ -74,7 +98,7 @@ function AfiSection({title, afi}: {title: string; afi: any}) {
         {label: "VRF",       value: afi.vrf ?? "default"},
       ]} />
       <div style={{height: 10}} />
-      <PeerTable peers={peers} />
+      <PeerTable peers={peers} switchAlias={switchAlias} />
     </Section>
   );
 }
@@ -84,6 +108,8 @@ export function BgpSummaryWidget({payload}: {payload: any}) {
   const totals = summary.totals ?? {};
   const ipv4 = payload?.ipv4;
   const ipv6 = payload?.ipv6;
+  const switchIp: string | undefined = summary.switch_ip;
+  const switchAlias = switchIp ? displayName(switchIp) : "<switch>";
 
   const hasV6 = ipv6 && (ipv6.peer_count > 0 || ipv6.router_id);
 
@@ -100,8 +126,8 @@ export function BgpSummaryWidget({payload}: {payload: any}) {
           {label: "VRF", value: summary.vrf ?? "default", tone: "neutral" as const},
         ]}
       />
-      <AfiSection title="IPv4 Unicast" afi={ipv4} />
-      {hasV6 && <AfiSection title="IPv6 Unicast" afi={ipv6} />}
+      <AfiSection title="IPv4 Unicast" afi={ipv4} switchAlias={switchAlias} />
+      {hasV6 && <AfiSection title="IPv6 Unicast" afi={ipv6} switchAlias={switchAlias} />}
       <div style={{marginTop: 4}}><Badge>{summary.source}</Badge></div>
     </div>
   );

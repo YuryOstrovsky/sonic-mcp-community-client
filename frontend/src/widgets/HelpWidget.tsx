@@ -70,9 +70,49 @@ const TOOL_TO_QUERY: Record<string, (switchAlias: string) => string | null> = {
   set_interface_mtu:          (s) => `set mtu of Ethernet12 to 9000 on ${s}`,
   add_vlan:                   (s) => `add vlan 250 on ${s}`,
   remove_vlan:                (s) => `remove vlan 250 on ${s}`,
-  // Special-case tools
-  set_interface_description:  () => null, // needs arbitrary text — configure in Tools view
-  run_show_command:           () => null, // needs a `command` input — configure in Tools view
+  // Fabric reads (no switch_ip needed — they span the inventory)
+  get_fabric_topology:        () => "fabric topology",
+  get_fabric_health:          () => "fabric health",
+  get_fabric_reachability_matrix: () => "reachability matrix",
+  get_fabric_mtu_consistency:     () => "mtu consistency",
+  get_fabric_bandwidth:           () => "fabric bandwidth",
+  validate_fabric_vs_intent:      () => "validate fabric",
+  ping_between:               (s) => `ping vm2 from ${s}`,
+  traceroute_between:         (s) => `traceroute vm2 from ${s}`,
+  // Two-switch diff — pick vm1 and vm2 explicitly so NL extracts left/right.
+  get_fabric_config_diff:     () => "diff config of vm1 and vm2",
+  // Drain/undrain target the currently-selected switch.
+  drain_switch:               (s) => `drain ${s}`,
+  undrain_switch:             (s) => `undrain ${s}`,
+  // Fabric/L3 mutations — lab-safe demo values. The confirmation modal
+  // pops with these pre-filled; users can edit (or just confirm to try).
+  // These targets are either no-ops or trivially reversible on the VS lab.
+  set_ip_interface:           (s) => `add ip 192.168.99.1/30 to Ethernet64 on ${s}`,
+  add_static_route:           (s) => `add route 198.51.100.0/24 via 10.0.0.33 on ${s}`,
+  remove_static_route:        (s) => `remove route 198.51.100.0/24 on ${s}`,
+  set_bgp_neighbor_admin:     (s) => `shutdown bgp peer 192.168.1.2 on ${s}`,
+  set_portchannel_member:     (s) => `add Ethernet64 to PortChannel1 on ${s}`,
+  // Phase 5d — operator-grade + L2 / snapshot / rollback tools
+  iperf_between:              (s) => `iperf vm2 from ${s}`,
+  get_routes_by_prefix:       () => "who has 10.0.0.0/31",
+  save_fabric_snapshot:       () => "take fabric snapshot named preflight",
+  restore_fabric_snapshot:    () => "restore snapshot preflight skip reload",
+  compare_fabric_snapshots:   () => "compare snapshots cmp_a and cmp_b",
+  fabric_drain_rotate:        () => "rolling drain maintenance",
+  detect_routing_loop:        () => "detect routing loops",
+  get_mac_table:              (s) => `show mac table on ${s}`,
+  get_mac_table_all:          () => "mac table on all switches",
+  get_arp_table_all:          () => "arp on all switches",
+  // rollback_mutation: route with no id — the confirm modal's combobox
+  // pulls the last 20 mutation_ids from the ledger so the user picks one.
+  rollback_mutation:          () => "undo last mutation",
+  // set_interface_description: a lab-safe demo description. The modal's
+  // combobox lists every interface on the target switch; user can edit
+  // both the interface name and the description text before confirming.
+  set_interface_description:  (s) => `set description Ethernet12 "MCP demo" on ${s}`,
+  // run_show_command routes via the "show …" escape hatch — SAFE_READ,
+  // runs directly without a modal. `show version` is universal + harmless.
+  run_show_command:           (s) => `show version on ${s}`,
   help:                       () => "help",
 };
 

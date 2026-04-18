@@ -57,6 +57,8 @@ _TOOLS_WITH_ALL_VARIANT: set = {
     "get_routes",
     "get_lldp_neighbors",
     "get_vlans",
+    "get_arp_table",
+    "get_mac_table",
 }
 
 _ALL_SCOPE_RE = re.compile(
@@ -76,26 +78,28 @@ def has_all_scope(text: str) -> bool:
 def extract_switch_ip(text: str) -> Optional[str]:
     """Pull a switch IP out of an utterance.
 
-    Resolution order:
-      1. Any bare IPv4 literal in the text (matched against SWITCH_ALIASES first,
-         or accepted if it looks like a valid IP)
-      2. Any alias token ("vm1", "sonic1", etc.) — word-boundary match
+    Resolution order (aliases first, then IP literals — this matters for
+    tool inputs that also contain IP-like values, e.g. 'shutdown bgp peer
+    192.168.1.2 on vm1' — the switch is vm1, not the peer IP):
+      1. Known alias token (vm1, sonic1, 10.46.11.50, ...) — longest first
+      2. Any bare IPv4 literal — only if step 1 found nothing
     """
     if not text:
         return None
     t = text.lower()
 
+    # Aliases first — longest-first so "sonic-vm1" beats "vm1".
+    aliases_sorted = sorted(SWITCH_ALIASES.keys(), key=len, reverse=True)
+    for alias in aliases_sorted:
+        if re.search(rf"(?<![\w\-.]){re.escape(alias)}(?![\w\-.])", t):
+            return SWITCH_ALIASES[alias]
+
+    # No alias — fall back to the first IP literal we see.
     for m in _IP_RE.finditer(text):
         ip = m.group(0)
         if ip in SWITCH_ALIASES:
             return SWITCH_ALIASES[ip]
         return ip
-
-    # alias tokens — check longest first so "sonic-vm1" beats "vm1"
-    aliases_sorted = sorted(SWITCH_ALIASES.keys(), key=len, reverse=True)
-    for alias in aliases_sorted:
-        if re.search(rf"(?<![\w\-.]){re.escape(alias)}(?![\w\-.])", t):
-            return SWITCH_ALIASES[alias]
     return None
 
 
@@ -147,6 +151,16 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
         ],
     ),
     (
+        "set_bgp_neighbor_admin",
+        # Must come BEFORE get_bgp_summary — otherwise "shut bgp peer X" hits
+        # the bare `\bbgp\b` pattern. Requires a BGP-qualifying word + IP.
+        [
+            re.compile(r"\b(shut(down)?|disable|admin\s+down)\b.*\b(bgp|peer|neighbor)\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b", re.I),
+            re.compile(r"\b(no\s+shut(down)?|unshut|enable|bring\s+up|admin\s+up)\b.*\b(bgp|peer|neighbor)\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b", re.I),
+            re.compile(r"\b(bgp|peer|neighbor)\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b.*\b(shut(down)?|no\s+shut(down)?|disable|enable)\b", re.I),
+        ],
+    ),
+    (
         "get_bgp_summary",
         [
             re.compile(r"\bbgp\b.*\b(summary|status|peers?|neighbors?|sessions?)\b", re.I),
@@ -184,6 +198,15 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
             re.compile(r"\b(show|list|get)\b.*\barp\b", re.I),
             re.compile(r"\barp\s+(table|entries|neighbors?)\b", re.I),
             re.compile(r"\barp\b", re.I),
+        ],
+    ),
+    (
+        "set_portchannel_member",
+        # Must come BEFORE get_portchannels (which has bare \bportchannels?\b).
+        [
+            re.compile(r"\b(add|join)\b.*\bEthernet\d+\b.*\b(to|into)\b.*\bPortChannel\d+\b", re.I),
+            re.compile(r"\b(remove|detach)\b.*\bEthernet\d+\b.*\bfrom\b.*\bPortChannel\d+\b", re.I),
+            re.compile(r"\bPortChannel\d+\b.*\b(add|remove)\b.*\bEthernet\d+\b", re.I),
         ],
     ),
     (
@@ -229,6 +252,18 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
         ],
     ),
     (
+        "set_interface_description",
+        # "set description Ethernet12 'foo'", "describe Ethernet12 as 'foo'",
+        # "Ethernet12 description 'foo'". Requires an Ethernet<N> + the word
+        # description (avoids grabbing generic "set foo" phrases).
+        [
+            re.compile(r"\b(set|update|change)\b.*\bdescription\b.*\bEthernet\d+\b", re.I),
+            re.compile(r"\bdescription\b.*\bEthernet\d+\b", re.I),
+            re.compile(r"\bEthernet\d+\b.*\bdescription\b", re.I),
+            re.compile(r"\bdescribe\b.*\bEthernet\d+\b", re.I),
+        ],
+    ),
+    (
         "clear_interface_counters",
         [
             re.compile(r"\b(clear|reset|zero)\b.*\b(counters?|statistics|stats)\b", re.I),
@@ -244,6 +279,230 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
             re.compile(r"\brecent\s+(mutations|changes)\b", re.I),
         ],
     ),
+    # Fabric-level reads must match BEFORE get_lldp_neighbors (whose bare
+    # `\b(topology|neighbors?)\b` would otherwise swallow "fabric topology").
+    (
+        "get_fabric_topology",
+        [
+            re.compile(r"\bfabric\s+topology\b", re.I),
+            re.compile(r"\b(topology|graph)\s+of\s+(the\s+)?fabric\b", re.I),
+            re.compile(r"\b(show|draw|render)\b.*\bfabric\b", re.I),
+            re.compile(r"\bfabric\s+map\b", re.I),
+        ],
+    ),
+    (
+        "get_fabric_health",
+        [
+            re.compile(r"\bfabric\s+(health|status)\b", re.I),
+            re.compile(r"\b(all|every)\s+(bgp\s+)?(links?|peers?|sessions?|adjacencies)\s+(up|established|healthy)\b", re.I),
+            re.compile(r"\b(any|are\s+there)\s+broken\s+(links?|peers?)\b", re.I),
+        ],
+    ),
+    # iperf must come BEFORE generic "test" / "throughput" words would match
+    # anything else. Its own patterns already require "iperf" explicitly.
+    (
+        "iperf_between",
+        [
+            re.compile(r"\biperf3?\b", re.I),
+            re.compile(r"\b(throughput|bandwidth)\s+(test|between)\b", re.I),
+            re.compile(r"\b(test\s+)?(bandwidth|throughput)\b.*\bfrom\b", re.I),
+        ],
+    ),
+    (
+        "get_routes_by_prefix",
+        # CIDR + explicit LOOKUP verb (search/find/lookup/who). Crucially,
+        # patterns here must NOT match "add route CIDR" — that's an
+        # add_static_route mutation. We enforce this by either requiring a
+        # lookup verb or by using a negative lookahead in the bare "route"
+        # pattern.
+        [
+            re.compile(r"\b(search|find|lookup|look\s+up)\b.*\b(route|prefix|network)\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
+            re.compile(r"\bwho\s+(has|advertises|sees|installs|knows)\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
+            re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\b(on\s+fabric|across\s+fabric|fabric\s+wide|everywhere|installed|advertised)\b", re.I),
+            # Bare "route CIDR" form — rejected when the query begins with
+            # add/install/create/remove/delete/withdraw (those are mutations).
+            re.compile(r"^(?!.*\b(add|install|create|remove|delete|del|drop|withdraw)\b).*\b(route|prefix)\s+(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
+        ],
+    ),
+    # Snapshot comparison — matches "compare snapshots X and Y",
+    # "diff snapshots X Y", etc. Requires the word 'snapshot' so it
+    # doesn't poach phrases like "diff config of vm1 and vm2"
+    # (which routes to get_fabric_config_diff).
+    (
+        "compare_fabric_snapshots",
+        [
+            re.compile(r"\b(compare|diff)\b.*\bsnapshots?\b", re.I),
+            re.compile(r"\bsnapshot\s+diff\b", re.I),
+        ],
+    ),
+    # restore_fabric_snapshot must come BEFORE rollback_mutation so that
+    # "rollback to snapshot X" routes to the snapshot restore, not the
+    # per-mutation rollback.
+    (
+        "restore_fabric_snapshot",
+        [
+            re.compile(r"\brestore\b.*\b(snapshot|backup)\b", re.I),
+            re.compile(r"\brestore\s+the\s+backup\b", re.I),
+            re.compile(r"\b(rollback|roll\s+back)\b.*\b(to\s+)?(snapshot|backup)\b", re.I),
+        ],
+    ),
+    (
+        "rollback_mutation",
+        # Require a mutation-specific anchor: either the word "mutation"
+        # or a mut-xxxxxx id. Bare "rollback" is too ambiguous (see above).
+        [
+            re.compile(r"\b(rollback|roll\s+back|undo|revert)\b.*\b(mut[ -]?\w{6,}|mutation)\b", re.I),
+            re.compile(r"\b(undo|revert)\b.*\b(last\s+)?(change|mutation)\b", re.I),
+        ],
+    ),
+    (
+        "save_fabric_snapshot",
+        [
+            re.compile(r"\b(save|take|create|snapshot)\b.*\b(snapshot|backup)\b", re.I),
+            re.compile(r"\b(snapshot|backup)\s+(fabric|config)\b", re.I),
+        ],
+    ),
+    (
+        "fabric_drain_rotate",
+        [
+            re.compile(r"\b(rolling\s+(drain|maintenance)|drain\s+rotate|rotate\s+(drain|fabric))\b", re.I),
+            re.compile(r"\brotate\s+the\s+fabric\b", re.I),
+            re.compile(r"\b(maintenance\s+rotation|rolling\s+bgp\s+maintenance)\b", re.I),
+        ],
+    ),
+    (
+        "detect_routing_loop",
+        [
+            re.compile(r"\b(detect|find|check(?:\s+for)?)\b.*\brouting\s+loops?\b", re.I),
+            re.compile(r"\brouting\s+loops?\b", re.I),
+            re.compile(r"\bforwarding\s+loops?\b", re.I),
+            re.compile(r"\bloop\s+detection\b", re.I),
+        ],
+    ),
+    # MAC / ARP fabric reads — must come BEFORE get_arp_table's bare \barp\b
+    # pattern (scope modifier "all" upgrades to the _all variant anyway, but
+    # "fabric mac" / "fabric arp" should route to our new fanouts).
+    (
+        "get_mac_table_all",
+        [
+            re.compile(r"\b(fabric\s+)?mac\s+(table|learning)\s+(all|across|fabric)\b", re.I),
+            re.compile(r"\b(all|every|fabric)\s+.*\bmac\s+(table|learning)\b", re.I),
+            re.compile(r"\bmac\s+table\s+on\s+all\b", re.I),
+        ],
+    ),
+    (
+        "get_mac_table",
+        [
+            re.compile(r"\b(show|list|get)\b.*\bmac\s+(table|address(es)?|learning)\b", re.I),
+            re.compile(r"\bmac\s+(table|address(es)?)\b", re.I),
+            re.compile(r"\bforwarding\s+table\b", re.I),
+            re.compile(r"\bfdb\b", re.I),
+        ],
+    ),
+    (
+        "get_arp_table_all",
+        [
+            re.compile(r"\b(fabric\s+)?arp\s+(across|on\s+all|everywhere)\b", re.I),
+            re.compile(r"\b(all|every|fabric)\s+.*\barp\b", re.I),
+            re.compile(r"\barp\s+on\s+all\b", re.I),
+        ],
+    ),
+    # Reachability matrix must come BEFORE bare `\bping\b` — otherwise
+    # "ping all / fabric reachability matrix" falls through to ping_between.
+    (
+        "get_fabric_reachability_matrix",
+        [
+            re.compile(r"\breachability\s+matrix\b", re.I),
+            re.compile(r"\bping\s+(all|every|the\s+fabric|the\s+whole\s+fabric|across)\b", re.I),
+            re.compile(r"\b(fabric|full|pairwise)\s+(reachability|ping)\b", re.I),
+            re.compile(r"\bn\s*x\s*n\s+ping\b", re.I),
+        ],
+    ),
+    # Traceroute above plain ping_between.
+    (
+        "traceroute_between",
+        [
+            re.compile(r"\b(traceroute|tracert|trace\s+route|trace\s+path)\b", re.I),
+            re.compile(r"\btrace\b.*\bfrom\b", re.I),
+            re.compile(r"\bpath\s+(from|to)\b.*\b(to|from)\b", re.I),
+        ],
+    ),
+    (
+        "ping_between",
+        [
+            # "ping vm2 from vm1" / "ping 10.46.11.51 from vm1"
+            re.compile(r"\bping\b.*\bfrom\b", re.I),
+            # "from vm1 ping vm2"
+            re.compile(r"\bfrom\b.*\bping\b", re.I),
+            # "can vm1 reach vm2" / "does vm1 reach vm2"
+            re.compile(r"\b(can|does)\b.*\b(reach|ping)\b", re.I),
+            # Bare "ping" — catches "ping", "ping vm2", "ping 10.1.1.1".
+            # Source/target may be partial or missing; the ping widget's
+            # dropdowns let the user complete the call. This avoids an
+            # expensive LLM round-trip for the common case.
+            re.compile(r"\bping\b", re.I),
+        ],
+    ),
+    (
+        "get_fabric_mtu_consistency",
+        [
+            re.compile(r"\bmtu\s+(consistency|audit|mismatch(es)?|check)\b", re.I),
+            re.compile(r"\b(audit|check)\s+mtu\b", re.I),
+            re.compile(r"\bmtu\s+across\s+(the\s+)?fabric\b", re.I),
+        ],
+    ),
+    (
+        "get_fabric_bandwidth",
+        [
+            re.compile(r"\bfabric\s+(bandwidth|utilization|traffic)\b", re.I),
+            re.compile(r"\b(show|check)\s+(link|interface)\s+(utilization|usage|bandwidth)\b", re.I),
+            re.compile(r"\b(utilization|bps|bandwidth)\b.*\b(across|fabric|all)\b", re.I),
+            re.compile(r"\btop\s+(talkers|links|interfaces)\b", re.I),
+        ],
+    ),
+    (
+        "get_fabric_config_diff",
+        [
+            re.compile(r"\b(diff|compare)\b.*\bconfig\b", re.I),
+            re.compile(r"\bconfig\s+(diff|drift|compare)\b", re.I),
+            re.compile(r"\b(diff|compare)\b.*\b(vm\d|sonic\d).*\b(and|vs|with)\b.*\b(vm\d|sonic\d)\b", re.I),
+        ],
+    ),
+    (
+        "validate_fabric_vs_intent",
+        [
+            re.compile(r"\bvalidate\s+(fabric|intent)\b", re.I),
+            re.compile(r"\b(check|verify)\s+intent\b", re.I),
+            re.compile(r"\bfabric\s+vs\.?\s+intent\b", re.I),
+            re.compile(r"\bintent\s+(drift|compliance|check)\b", re.I),
+        ],
+    ),
+    (
+        "drain_switch",
+        [
+            re.compile(r"\bdrain\b.*\b(vm\d|sonic\d|sonic-vm\d|switch|10\.\d)", re.I),
+            re.compile(r"\b(maintenance|isolate)\b.*\b(vm\d|sonic\d)\b", re.I),
+            re.compile(r"\b(admin\s+shut|shut\s+all)\s+(bgp\s+)?(peers|neighbors)\b", re.I),
+        ],
+    ),
+    (
+        "undrain_switch",
+        [
+            re.compile(r"\bundrain\b", re.I),
+            re.compile(r"\b(un-?isolate|bring\s+back|return\s+to\s+service)\b", re.I),
+            re.compile(r"\b(admin\s+up|no\s+shut\s+all)\s+(bgp\s+)?(peers|neighbors)\b", re.I),
+        ],
+    ),
+    (
+        "set_ip_interface",
+        # CIDR literal + interface literal discriminates this from plain
+        # "add route" phrases — no ambiguity with add_static_route below.
+        [
+            re.compile(r"\b(add|assign|set)\b.*\bip\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\b(Ethernet|PortChannel|Loopback|Vlan)\d+\b", re.I),
+            re.compile(r"\b(remove|unassign|clear)\b.*\bip\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\b(Ethernet|PortChannel|Loopback|Vlan)\d+\b", re.I),
+            re.compile(r"\b(Ethernet|PortChannel|Loopback|Vlan)\d+\b.*\bip\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
+        ],
+    ),
     (
         "get_lldp_neighbors",
         [
@@ -257,6 +516,22 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
             re.compile(r"\b(ipv6|v6)\b.*\broutes?\b", re.I),
             re.compile(r"\broutes?\b.*\b(ipv6|v6)\b", re.I),
             re.compile(r"\bipv6\s+(routing|route\s+table)\b", re.I),
+        ],
+    ),
+    # Route mutations must come BEFORE get_routes (which has bare \broutes?\b).
+    (
+        "add_static_route",
+        [
+            re.compile(r"\b(add|install|create)\b.*\b(static\s+)?route\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\bvia\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b", re.I),
+            re.compile(r"\b(add|install|create)\b.*\b(static\s+)?route\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\bnexthop\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b", re.I),
+            re.compile(r"\bip\s+route\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b.*\b(?:\d{1,3}\.){3}\d{1,3}\b", re.I),
+        ],
+    ),
+    (
+        "remove_static_route",
+        [
+            re.compile(r"\b(remove|delete|del|withdraw|drop)\b.*\b(static\s+)?route\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
+            re.compile(r"\bno\s+ip\s+route\b.*\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", re.I),
         ],
     ),
     (
@@ -417,6 +692,27 @@ def route(text: str) -> Optional[RoutedIntent]:
             elif is_down:
                 inputs["admin_status"] = "down"
 
+        # set_interface_description needs `interface` + `description`.
+        if tool == "set_interface_description":
+            iface_m = re.search(r"\bEthernet(\d+)\b", raw, re.I)
+            if iface_m:
+                inputs["interface"] = f"Ethernet{iface_m.group(1)}"
+            # Description is a quoted string (single or double) — preferred —
+            # or falls back to whatever follows "to " / "as " up to the next
+            # "on <switch>" clause. We intentionally DON'T treat "description"
+            # as a starting anchor because the field name itself precedes
+            # the value in phrases like "set description Ethernet0 to Uplink".
+            quoted = re.search(r'"([^"]+)"|' + r"'([^']+)'", raw)
+            if quoted:
+                inputs["description"] = quoted.group(1) or quoted.group(2)
+            else:
+                tail = re.sub(r"\s+on\s+\S+\s*$", "", raw, flags=re.I)
+                after = re.search(r"\b(?:to|as)\s+(.+)$", tail, re.I)
+                if after:
+                    text = after.group(1).strip().strip(".,")
+                    if text and len(text) >= 2:
+                        inputs["description"] = text
+
         # set_interface_mtu needs `interface` + `mtu`.
         if tool == "set_interface_mtu":
             iface_m = re.search(r"\bEthernet(\d+)\b", raw, re.I)
@@ -446,6 +742,294 @@ def route(text: str) -> Optional[RoutedIntent]:
                     inputs["vlan_id"] = int(vid_m.group(1))
                 except ValueError:
                     pass
+
+        # set_ip_interface needs `interface`, `address`, `action`.
+        if tool == "set_ip_interface":
+            iface_m = re.search(r"\b(Ethernet|PortChannel|Loopback|Vlan)(\d+)\b", raw, re.I)
+            if iface_m:
+                prefix = {"ethernet": "Ethernet", "portchannel": "PortChannel",
+                          "loopback": "Loopback", "vlan": "Vlan"}[iface_m.group(1).lower()]
+                inputs["interface"] = f"{prefix}{iface_m.group(2)}"
+            cidr_m = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3}/\d{1,2})\b", raw)
+            if cidr_m:
+                inputs["address"] = cidr_m.group(1)
+            if re.search(r"\b(remove|unassign|clear|delete|del)\b", raw, re.I):
+                inputs["action"] = "remove"
+            elif re.search(r"\b(add|assign|set)\b", raw, re.I):
+                inputs["action"] = "add"
+
+        # add_static_route needs `prefix`, `nexthop`, optional `distance`.
+        if tool == "add_static_route":
+            cidrs = re.findall(r"\b((?:\d{1,3}\.){3}\d{1,3}/\d{1,2})\b", raw)
+            ips_no_mask = re.findall(r"\b((?:\d{1,3}\.){3}\d{1,3})\b(?!/)", raw)
+            if cidrs:
+                inputs["prefix"] = cidrs[0]
+            # Prefer an IP that comes after "via" or "nexthop"; else first
+            # bare IP that isn't a mgmt alias.
+            nh_m = re.search(r"\b(?:via|nexthop|gw|gateway)\s+((?:\d{1,3}\.){3}\d{1,3})\b", raw, re.I)
+            if nh_m:
+                inputs["nexthop"] = nh_m.group(1)
+            elif ips_no_mask:
+                inputs["nexthop"] = ips_no_mask[0]
+            # Trailing integer in 1..255 after the nexthop is interpreted as
+            # administrative distance.
+            dist_m = re.search(r"\b(?:distance|ad)\s+(\d{1,3})\b", raw, re.I)
+            if dist_m:
+                try:
+                    d = int(dist_m.group(1))
+                    if 1 <= d <= 255:
+                        inputs["distance"] = d
+                except ValueError:
+                    pass
+
+        # remove_static_route needs `prefix`, optional `nexthop`.
+        if tool == "remove_static_route":
+            cidrs = re.findall(r"\b((?:\d{1,3}\.){3}\d{1,3}/\d{1,2})\b", raw)
+            if cidrs:
+                inputs["prefix"] = cidrs[0]
+            nh_m = re.search(r"\b(?:via|nexthop|gw|gateway)\s+((?:\d{1,3}\.){3}\d{1,3})\b", raw, re.I)
+            if nh_m:
+                inputs["nexthop"] = nh_m.group(1)
+
+        # set_bgp_neighbor_admin needs `peer` + `admin_status`.
+        if tool == "set_bgp_neighbor_admin":
+            peer_m = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3})\b", raw)
+            if peer_m:
+                inputs["peer"] = peer_m.group(1)
+            # Up verbs checked first — "no shut" must not count as "shut".
+            is_up = bool(re.search(
+                r"\b(no\s+shut(down)?|unshut|enable|bring\s+up|admin\s+up)\b", raw, re.I,
+            ))
+            is_down = False
+            if not is_up:
+                is_down = bool(re.search(
+                    r"\b(shut(down)?|disable|admin\s+down)\b", raw, re.I,
+                ))
+            if is_up:
+                inputs["admin_status"] = "up"
+            elif is_down:
+                inputs["admin_status"] = "down"
+
+        # set_portchannel_member needs `portchannel`, `interface`, `action`.
+        if tool == "set_portchannel_member":
+            po_m = re.search(r"\bPortChannel(\d+)\b", raw, re.I)
+            if po_m:
+                inputs["portchannel"] = f"PortChannel{po_m.group(1)}"
+            eth_m = re.search(r"\bEthernet(\d+)\b", raw, re.I)
+            if eth_m:
+                inputs["interface"] = f"Ethernet{eth_m.group(1)}"
+            if re.search(r"\b(remove|detach|delete|del)\b", raw, re.I):
+                inputs["action"] = "remove"
+            elif re.search(r"\b(add|join)\b", raw, re.I):
+                inputs["action"] = "add"
+
+        # ping_between needs `source_switch_ip` + `target`. Two switch aliases
+        # can appear; the one after "from" is the source, the other is target.
+        if tool == "ping_between":
+            # Find switch aliases / IPs in order of appearance. Store
+            # (position, resolved_mgmt_ip, original_token) so we can pick
+            # resolved form for both source and target — SONiC VMs don't
+            # resolve each other's aliases via DNS.
+            matches = []
+            for m in re.finditer(r"\b(vm\d|sonic\d|sonic-vm\d|(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?)\b", raw, re.I):
+                token = m.group(1).lower().split("/")[0]
+                resolved = SWITCH_ALIASES.get(token, m.group(1))
+                matches.append((m.start(), resolved, m.group(1)))
+            # Where does "from" appear? Everything after it is the source.
+            # "ping X from Y"  → X=target (before from), Y=source (after from)
+            # "from Y ping X"  → Y=source (first after from), X=target (second after from)
+            from_m = re.search(r"\bfrom\b", raw, re.I)
+            src, tgt = None, None
+            if from_m:
+                before = [x for x in matches if x[0] < from_m.start()]
+                after = [x for x in matches if x[0] > from_m.start()]
+                if after:
+                    src = after[0][1]
+                if before:
+                    tgt = before[0][1]
+                elif len(after) >= 2:
+                    # "from X ping Y" — no tokens before "from", so the
+                    # second post-"from" alias is the target.
+                    tgt = after[1][1]
+            else:
+                # "can vm1 reach vm2": first = source, second = target
+                if len(matches) >= 2:
+                    src = matches[0][1]
+                    tgt = matches[1][1]
+                elif matches:
+                    tgt = matches[0][1]
+            if src:
+                inputs["source_switch_ip"] = src
+                inputs.pop("switch_ip", None)
+            elif switch_ip:
+                # Fall back to whatever the generic switch extraction found.
+                # For bare "ping", this is usually the global-selected switch
+                # appended by the ConsoleView as "on <alias>".
+                inputs["source_switch_ip"] = switch_ip
+                inputs.pop("switch_ip", None)
+            if tgt:
+                inputs["target"] = tgt
+
+        # traceroute_between uses the same source/target logic as ping_between.
+        if tool == "traceroute_between":
+            matches = []
+            for m in re.finditer(r"\b(vm\d|sonic\d|sonic-vm\d|(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?)\b", raw, re.I):
+                token = m.group(1).lower().split("/")[0]
+                resolved = SWITCH_ALIASES.get(token, m.group(1))
+                matches.append((m.start(), resolved, m.group(1)))
+            from_m = re.search(r"\bfrom\b", raw, re.I)
+            src, tgt = None, None
+            if from_m:
+                before = [x for x in matches if x[0] < from_m.start()]
+                after  = [x for x in matches if x[0] > from_m.start()]
+                if after:  src = after[0][1]
+                if before: tgt = before[0][1]
+                elif len(after) >= 2: tgt = after[1][1]
+            else:
+                if len(matches) >= 2:
+                    src = matches[0][1]; tgt = matches[1][1]
+                elif matches:
+                    tgt = matches[0][1]
+            if src:
+                inputs["source_switch_ip"] = src
+                inputs.pop("switch_ip", None)
+            elif switch_ip:
+                inputs["source_switch_ip"] = switch_ip
+                inputs.pop("switch_ip", None)
+            if tgt:
+                inputs["target"] = tgt
+
+        # drain_switch / undrain_switch: pick target switch from the text
+        # (an alias like "drain vm2" should operate on vm2, not the globally-
+        # selected switch). Fall back to switch_ip when no alias in text.
+        if tool in ("drain_switch", "undrain_switch"):
+            # switch_ip is already set by the generic extraction above —
+            # nothing more to do, but drop any stray keys.
+            for k in list(inputs.keys()):
+                if k not in {"switch_ip"}:
+                    inputs.pop(k, None)
+
+        # iperf_between uses the same source/target logic as ping/traceroute.
+        if tool == "iperf_between":
+            matches = []
+            for m in re.finditer(r"\b(vm\d|sonic\d|sonic-vm\d|(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?)\b", raw, re.I):
+                token = m.group(1).lower().split("/")[0]
+                resolved = SWITCH_ALIASES.get(token, m.group(1))
+                matches.append((m.start(), resolved, m.group(1)))
+            from_m = re.search(r"\bfrom\b", raw, re.I)
+            src, tgt = None, None
+            if from_m:
+                before = [x for x in matches if x[0] < from_m.start()]
+                after  = [x for x in matches if x[0] > from_m.start()]
+                if after:  src = after[0][1]
+                if before: tgt = before[0][1]
+                elif len(after) >= 2: tgt = after[1][1]
+            else:
+                if len(matches) >= 2:
+                    src = matches[0][1]; tgt = matches[1][1]
+                elif matches:
+                    tgt = matches[0][1]
+            if src:
+                inputs["source_switch_ip"] = src
+                inputs.pop("switch_ip", None)
+            elif switch_ip:
+                inputs["source_switch_ip"] = switch_ip
+                inputs.pop("switch_ip", None)
+            if tgt:
+                inputs["target"] = tgt
+            # optional duration: "5s", "10 seconds", "for 5"
+            dur_m = re.search(r"\b(?:for\s+)?(\d{1,2})\s*(?:s|sec|seconds?)\b", raw, re.I)
+            if dur_m:
+                try:
+                    inputs["duration_s"] = int(dur_m.group(1))
+                except ValueError:
+                    pass
+            # "reverse" keyword → reverse mode
+            if re.search(r"\breverse\b", raw, re.I):
+                inputs["reverse"] = True
+
+        # get_routes_by_prefix: grab first CIDR in the text as prefix.
+        if tool == "get_routes_by_prefix":
+            cidr = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3}/\d{1,2})\b", raw)
+            if cidr:
+                inputs["prefix"] = cidr.group(1)
+            # match_mode keywords
+            if re.search(r"\bexact\b", raw, re.I):       inputs["match_mode"] = "exact"
+            elif re.search(r"\bcovers\b", raw, re.I):    inputs["match_mode"] = "covers"
+            elif re.search(r"\bcovered\b", raw, re.I):   inputs["match_mode"] = "covered_by"
+            inputs.pop("switch_ip", None)
+
+        # rollback_mutation: extract a mutation_id-looking token.
+        if tool == "rollback_mutation":
+            m = re.search(r"\b(mut-[a-f0-9]{6,}|mut_[a-zA-Z0-9]+)\b", raw, re.I)
+            if m:
+                inputs["mutation_id"] = m.group(1)
+            inputs.pop("switch_ip", None)
+
+        # save_fabric_snapshot: optional name from "named X" / "as X"
+        if tool == "save_fabric_snapshot":
+            nm = re.search(r"\b(?:named|as|label(?:ed)?|called)\s+([A-Za-z0-9_.\-]+)\b", raw, re.I)
+            if nm:
+                inputs["name"] = nm.group(1)
+            inputs.pop("switch_ip", None)
+
+        # compare_fabric_snapshots: pull two snapshot names after
+        # "snapshots" keyword, or two tokens after "diff"/"compare".
+        if tool == "compare_fabric_snapshots":
+            # Match "snapshots X and Y", "snapshots X Y", "X vs Y"
+            m = re.search(
+                r"\bsnapshots?\s+([A-Za-z0-9_.\-]+)\s+(?:and|vs|v\.?|versus|,)?\s*([A-Za-z0-9_.\-]+)\b",
+                raw, re.I,
+            )
+            if m:
+                inputs["left_name"] = m.group(1)
+                inputs["right_name"] = m.group(2)
+            inputs.pop("switch_ip", None)
+
+        # restore_fabric_snapshot: mandatory name. Look for a token after
+        # "restore snapshot X" / "restore X" / "snapshot X". Explicitly skip
+        # "snapshot"/"backup" themselves so "restore snapshot preflight"
+        # captures "preflight", not "snapshot".
+        if tool == "restore_fabric_snapshot":
+            nm = re.search(
+                r"\b(?:restore|rollback\s+to)\s+(?:(?:the\s+)?(?:snapshot|backup)\s+)?"
+                r"([A-Za-z0-9_.\-]+)\b",
+                raw, re.I,
+            )
+            if nm:
+                candidate = nm.group(1)
+                # Reject filler words the regex might capture accidentally.
+                if candidate.lower() not in {"snapshot", "backup", "the", "a", "an"}:
+                    inputs["name"] = candidate
+            if re.search(r"\bskip\s+reload\b|\bno\s+reload\b|\bstage\b", raw, re.I):
+                inputs["skip_reload"] = True
+            inputs.pop("switch_ip", None)
+
+        # fabric_drain_rotate / detect_routing_loop / arp_table_all /
+        # mac_table_all: all inventory-wide; strip any switch_ip.
+        if tool in ("fabric_drain_rotate", "detect_routing_loop",
+                    "get_arp_table_all", "get_mac_table_all"):
+            inputs.pop("switch_ip", None)
+
+        # get_fabric_config_diff: pick two switch aliases in order of
+        # appearance. "diff config of vm1 and vm2" → left=vm1 right=vm2.
+        if tool == "get_fabric_config_diff":
+            matches = []
+            for m in re.finditer(r"\b(vm\d|sonic\d|sonic-vm\d|(?:\d{1,3}\.){3}\d{1,3})\b", raw, re.I):
+                token = m.group(1).lower()
+                resolved = SWITCH_ALIASES.get(token, m.group(1))
+                matches.append(resolved)
+            # dedupe while preserving order
+            seen = set(); uniq = []
+            for ip in matches:
+                if ip not in seen:
+                    seen.add(ip); uniq.append(ip)
+            if len(uniq) >= 2:
+                inputs["left_switch_ip"]  = uniq[0]
+                inputs["right_switch_ip"] = uniq[1]
+                inputs.pop("switch_ip", None)  # not needed for diff
+            # If <2 switches in the text, leave it for the user to fill
+            # in via the Tools view.
 
         # User said "all" but the matched tool has no _all variant — keep
         # single-device call and note the limitation so the UI can surface it.

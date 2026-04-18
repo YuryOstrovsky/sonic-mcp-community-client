@@ -11,6 +11,7 @@ import {FG} from "../lib/figmaStyles";
 import {displayName} from "../lib/state";
 import {Badge, StatusPill} from "../shared";
 import {Section, SummaryStrip} from "./common";
+import {RowActionsMenu, type RowAction} from "./RowActions";
 
 type Entry = {
   mutation_id: string;
@@ -88,11 +89,29 @@ export function ActivityWidget({payload}: {payload: any}) {
   );
 }
 
+// Tools whose rollback is supported by the server-side reverse planner.
+// Keep in sync with _REVERSIBLE in sonic/tools/system/rollback_mutation.py.
+const _REVERSIBLE_TOOLS = new Set([
+  "set_interface_admin_status", "set_interface_mtu", "set_interface_description",
+  "set_ip_interface", "add_vlan", "remove_vlan", "add_static_route",
+  "remove_static_route", "set_bgp_neighbor_admin", "set_portchannel_member",
+  "drain_switch", "undrain_switch",
+]);
+
 function EntryRow({entry: e}: {entry: Entry}) {
   const [open, setOpen] = useState(false);
   const ok = e.status === "ok";
   const ts = e.timestamp || "";
   const tsShort = ts.length >= 19 ? ts.replace("T", " ").slice(0, 19) + " UTC" : ts;
+
+  const rollbackable = ok && _REVERSIBLE_TOOLS.has(e.tool);
+  const rowActions: RowAction[] = [
+    {
+      label: rollbackable ? "Rollback this mutation" : "Rollback (not reversible)",
+      tone: "warn",
+      prompt: () => rollbackable ? `rollback mutation ${e.mutation_id}` : null,
+    },
+  ];
 
   return (
     <section style={{
@@ -101,45 +120,43 @@ function EntryRow({entry: e}: {entry: Entry}) {
       borderRadius: 10,
       overflow: "hidden",
     }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
+      <div
+        onMouseEnter={(el) => (el.currentTarget.style.background = FG.rowHoverBg)}
+        onMouseLeave={(el) => (el.currentTarget.style.background = "transparent")}
         style={{
           width: "100%",
           display: "grid",
-          gridTemplateColumns: "auto 130px 1fr auto auto auto",
+          gridTemplateColumns: "auto 130px 1fr auto auto auto auto",
           alignItems: "center",
           gap: 10,
           padding: "8px 12px",
-          background: "transparent",
-          border: "none",
-          cursor: "pointer",
-          color: FG.bodyColor,
-          textAlign: "left",
         }}
-        onMouseEnter={(el) => (el.currentTarget.style.background = FG.rowHoverBg)}
-        onMouseLeave={(el) => (el.currentTarget.style.background = "transparent")}
       >
-        <span style={{color: FG.mutedColor, fontSize: 11, fontFamily: "ui-monospace, monospace"}}>
-          {open ? "▾" : "▸"}
-        </span>
-        <span style={{fontSize: 11, color: FG.mutedColor, fontFamily: "ui-monospace, monospace"}}>
-          {tsShort.slice(11, 19) || "—"}
-        </span>
-        <span style={{
-          fontFamily: "ui-monospace, monospace",
-          fontWeight: 600,
-          color: FG.titleColor,
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}>{e.tool}</span>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{background: "transparent", border: "none", cursor: "pointer", color: FG.mutedColor, fontSize: 11, fontFamily: "ui-monospace, monospace", gridColumn: "1"}}
+        >{open ? "▾" : "▸"}</button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{background: "transparent", border: "none", cursor: "pointer", color: FG.mutedColor, fontSize: 11, fontFamily: "ui-monospace, monospace", textAlign: "left", gridColumn: "2"}}
+        >{tsShort.slice(11, 19) || "—"}</button>
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            background: "transparent", border: "none", cursor: "pointer",
+            fontFamily: "ui-monospace, monospace", fontWeight: 600,
+            color: FG.titleColor, textAlign: "left",
+            minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            gridColumn: "3",
+          }}
+        >{e.tool}</button>
         <Badge title={e.switch_ip ?? ""}>
           {e.switch_ip ? displayName(e.switch_ip) : "—"}
         </Badge>
         <StatusPill tone={e.risk === "DESTRUCTIVE" ? "bad" : "warn"}>{e.risk}</StatusPill>
         <StatusPill tone={ok ? "good" : "bad"}>{e.status}</StatusPill>
-      </button>
+        <RowActionsMenu actions={rowActions} />
+      </div>
 
       {open && (
         <div style={{

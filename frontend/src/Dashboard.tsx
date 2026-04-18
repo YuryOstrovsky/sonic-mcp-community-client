@@ -1,9 +1,7 @@
 /**
- * Dashboard view — at-a-glance lab health.
- *
- * Phase B: device cards from /api/ready, upstream MCP status.
- * Phase C: will add per-tool summary widgets (interfaces up count, BGP
- * established count, LLDP RX diagnostic, etc.) per selected switch.
+ * Dashboard view — at-a-glance lab health: device cards from /api/ready,
+ * upstream MCP status, and a per-switch operational summary (system /
+ * interfaces / BGP / LLDP fanouts).
  */
 
 import {FG} from "./lib/figmaStyles";
@@ -11,6 +9,25 @@ import {displayName} from "./lib/state";
 import {Panel, StatusPill, Badge, EmptyState, Loading} from "./shared";
 import type {ToolSpec} from "./lib/api";
 import {PerSwitchSummary} from "./PerSwitchSummary";
+
+function toolsBreakdown(tools: ToolSpec[]): string {
+  const counts = new Map<string, number>();
+  for (const t of tools) {
+    const risk = t.policy?.risk ?? "SAFE_READ";
+    counts.set(risk, (counts.get(risk) ?? 0) + 1);
+  }
+  // Preferred display order: SAFE_READ → MUTATION → DESTRUCTIVE → anything else.
+  const order = ["SAFE_READ", "MUTATION", "DESTRUCTIVE"];
+  const parts: string[] = [];
+  for (const risk of order) {
+    const n = counts.get(risk);
+    if (n) parts.push(`${n} ${risk.toLowerCase().replace("_", " ")}`);
+  }
+  for (const [risk, n] of counts) {
+    if (!order.includes(risk)) parts.push(`${n} ${risk.toLowerCase()}`);
+  }
+  return parts.join(" · ");
+}
 
 type DeviceStatus = {restconf?: boolean; ssh?: boolean};
 type ReadyShape = {
@@ -36,6 +53,7 @@ export function Dashboard(props: {
   health: HealthShape | null;
   tools: ToolSpec[] | null;
   selectedSwitch: string | null;
+  refreshKey?: number;
 }) {
   const devices = props.ready?.body?.checks?.devices ?? {};
   const deviceIps = Object.keys(devices);
@@ -65,7 +83,7 @@ export function Dashboard(props: {
           label="Tools"
           value={props.tools ? String(props.tools.length) : "…"}
           tone="info"
-          sub={props.tools ? "all SAFE_READ" : "loading catalog"}
+          sub={props.tools ? toolsBreakdown(props.tools) : "loading catalog"}
         />
         <SummaryCard
           label="Server version"
@@ -96,7 +114,7 @@ export function Dashboard(props: {
       </Panel>
 
       {/* Per-switch operational summary — fans out system/interfaces/bgp/lldp */}
-      <PerSwitchSummary selectedSwitch={props.selectedSwitch} />
+      <PerSwitchSummary selectedSwitch={props.selectedSwitch} refreshKey={props.refreshKey} />
     </div>
   );
 }
@@ -122,7 +140,9 @@ function SummaryCard(props: {
         <div style={{fontSize: 22, fontWeight: 600, color: FG.headingColor}}>
           {props.value}
         </div>
-        <StatusPill tone={props.tone}>{props.tone}</StatusPill>
+        {(props.tone === "good" || props.tone === "warn" || props.tone === "bad") && (
+          <StatusPill tone={props.tone}>{props.tone === "good" ? "ok" : props.tone}</StatusPill>
+        )}
       </div>
       {props.sub && (
         <div style={{fontSize: 12, color: FG.mutedColor, marginTop: 6}}>{props.sub}</div>
@@ -158,8 +178,11 @@ function DeviceCard(props: {
         {props.selected && <Badge>selected</Badge>}
       </div>
       <div style={{display: "flex", gap: 6, flexWrap: "wrap"}}>
-        <StatusPill tone={rc ? "good" : "bad"}>RESTCONF</StatusPill>
-        <StatusPill tone={ssh ? "good" : "bad"}>SSH</StatusPill>
+        {/* Transport tags: neutral by default (they're labels showing what's */}
+        {/* supported). Recolor only when a transport is down — that's the   */}
+        {/* signal worth looking at.                                          */}
+        <StatusPill tone={rc ? "neutral" : "bad"}>RESTCONF</StatusPill>
+        <StatusPill tone={ssh ? "neutral" : "bad"}>SSH</StatusPill>
         <StatusPill tone={both ? "good" : rc || ssh ? "warn" : "bad"}>
           {both ? "all good" : rc || ssh ? "partial" : "down"}
         </StatusPill>

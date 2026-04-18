@@ -1,123 +1,198 @@
 # SONiC MCP Community Client
 
-Web UI + lightweight API backend for the [SONiC MCP Community Server](../sonic-mcp-community-server/).
+Web UI + thin API proxy for the
+[**SONiC MCP Community Server**](https://github.com/YuryOstrovsky/sonic-mcp-community-server).
+Gives operators (and AI agents) a dark, keyboard-first front-end for
+every tool the server exposes — plus a live fabric topology graph, an
+editable mutation-confirm modal, a command palette, and natural-
+language routing with optional LLM fallback.
 
-Read-only, no auth, community-grade. Designed to run alongside the server on a trusted-network host.
-Server repo: https://github.com/YuryOstrovsky/sonic-mcp-community-server
+This is a **separate product** from the server — use it against any
+compatible MCP endpoint on a trusted network.
 
-## Status
+- **GitHub (this repo):** https://github.com/YuryOstrovsky/sonic-mcp-community-client
+- **GitHub (server):** https://github.com/YuryOstrovsky/sonic-mcp-community-server
+- **Docker Hub (client):** [`extremecanada/sonic-mcp-community-client`](https://hub.docker.com/r/extremecanada/sonic-mcp-community-client)
+- **Docker Hub (server):** [`extremecanada/sonic-mcp-community-server`](https://hub.docker.com/r/extremecanada/sonic-mcp-community-server)
 
-- **Phase A (shipped):** minimal backend proxy — `/api/health`, `/api/tools`, `/api/invoke`, `/api/nl` (regex-based), `/api/examples`, `/api/ready`.
-- **Phase B (shipped):** real frontend shell — left sidebar, top-bar switch picker, three views (Dashboard, AI Console, Tools).
-- **Phase C (shipped):** SONiC-shaped widgets — `InterfacesWidget`, `IpInterfacesWidget`, `RoutesWidget` (used for both IPv4 and IPv6), `BgpSummaryWidget`, `LldpWidget`, `SystemInfoWidget`, `ShowCommandWidget`. Every `/invoke` result flows through a `ToolResultPanel` that picks the right widget and offers a widget ↔ raw JSON toggle.
-- **Phase D (next):** LLM fallback (OpenAI / Ollama) in the NL router for queries outside the regex surface.
+---
 
-## Layout
+## What's in the box
 
-```
-backend/                FastAPI proxy (~300 lines, no auth)
-  main.py               Routes
-  nl_router.py          Regex-based NL → tool mapping (SONiC intents)
-  requirements.txt
-  .env.example
-  README.md
-frontend/               Vite + React 19 + TypeScript + Tailwind
-  src/
-    App.tsx             App shell (placeholder in Phase A)
-    lib/api.ts          Minimal HTTP wrapper + session handling
-    lib/figmaStyles.ts  Design tokens (preserved from prior project)
-    index.css           Tailwind + CSS custom properties
-    App.css             Animations
-  index.html
-  package.json
-  vite.config.ts        Already binds 0.0.0.0:5173 with /api proxy
-_legacy/                Quarantined XCO enterprise client for reference
-```
+**Six views**, all served off a single port (`5174` by default):
 
-## Quick start — single port (recommended)
+| View | What it does |
+|---|---|
+| **Dashboard** | At-a-glance health: server reachability, device status, per-switch operational summary (BGP, interfaces, LLDP), tools registered, auto-refresh with a live fabric-health badge in the header. |
+| **Fabric** | `get_fabric_topology` rendered as a reactflow graph. Nodes = switches, edges = BGP/LLDP adjacencies. Click a node → detail panel with ASN, router-id, and adjacencies. |
+| **AI Console** | Chat-style NL interface. Regex router maps free text to a tool + inputs; off-script queries fall through to an LLM (OpenAI or Ollama, configured in Settings). Results render as rich per-tool widgets. History persists across reloads (last 50 turns; has a **Clear** button). |
+| **Tools** | Full catalog with search, auto-generated forms from each tool's JSON Schema, policy risk pills, live result in the matching widget. |
+| **Activity** | Server-side mutation ledger: timestamp, tool, switch, status, pre/post state. Search, filter by status/tool/switch, row actions (rollback supported mutations with one click). |
+| **Settings** | Active LLM provider (Auto / OpenAI / Ollama), API keys, model picker, **live fabric-intent editor** with Save / Validate / Reload. |
 
-One port, one URL, no Vite dev server. This is how you'll usually run it.
+**Cross-cutting features**
 
-```bash
-# 1) Backend dependencies
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env        # edit MCP_BASE_URL if it's not http://127.0.0.1:8000
+- **Command palette** (⌘K / Ctrl-K) — fuzzy search every tool, jump to any view, pick a switch.
+- **Confirm-mutation modal** with editable inputs and **live combobox suggestions** fetched from the target switch (interface names, VLAN IDs, BGP peers, etc.).
+- **Row actions (`⋯`)** on Interfaces / BGP / Activity tables — one-click shutdown / MTU / description / rollback, all routed through the same confirm modal.
+- **Export** every result as JSON / Markdown / CSV — copy or download.
+- **Structured error cards** classifying common failures (auth / timeout / requires confirmation / unreachable) with copy + activity-jump actions.
+- **Toast notifications** for mutation success/failure, copies, downloads.
+- **Virtualized tables** when a widget lands >200 rows (LLDP / ARP on a large fabric).
+- **Auto-refresh** (off / 30s / 60s / 120s) — polls `get_fabric_health` in the background and flips the header dot red on drift.
 
-# 2) Build the frontend once (static bundle into frontend/dist/)
-cd ../frontend
-npm ci
-npm run build
-
-# 3) Launch the backend — it auto-serves the built frontend from /
-cd ../backend
-source .venv/bin/activate    # if not already active
-uvicorn main:app --host 0.0.0.0 --port 5174
-```
-
-Now open `http://<server-ip>:5174/` from your Mac. Rebuild the frontend (`npm run build`)
-whenever you change React code; the backend picks up the new `dist/` on the next
-page refresh.
-
-### Run as a systemd service (recommended for "always on")
-
-```bash
-sudo cp systemd/sonic-mcp-client.service /etc/systemd/system/sonic-mcp-client.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now sonic-mcp-client
-systemctl status sonic-mcp-client --no-pager
-journalctl -u sonic-mcp-client -f
-```
-
-See `systemd/README.md` for full install/uninstall/operations. Note: the
-OpenAI key set via the UI is runtime-only — put it in `backend/.env` as
-`OPENAI_API_KEY=sk-…` to survive service restarts.
-
-## Alternative — dev mode with hot reload
-
-Only useful when you're actively editing React code and want live reload.
-
-```bash
-# Terminal 1: backend (no need to build the frontend)
-cd backend && source .venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 5174 --reload
-
-# Terminal 2: Vite dev server on :5173 (proxies /api to :5174)
-cd frontend && npm run dev
-```
-
-Open `http://<server-ip>:5173/`. Code changes hot-reload.
-
-## End-to-end smoke
-
-```bash
-curl -sS http://127.0.0.1:5174/api/health | jq
-curl -sS http://127.0.0.1:5174/api/tools  | jq '.[] | .name'
-curl -sS -X POST http://127.0.0.1:5174/api/invoke \
-  -H "Content-Type: application/json" \
-  -d '{"tool":"get_system_info","inputs":{"switch_ip":"10.46.11.50"}}' | jq
-curl -sS -X POST "http://127.0.0.1:5174/api/nl?auto=true" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"show bgp summary on vm1"}' | jq
-```
+---
 
 ## Architecture
 
 ```
-Mac browser ──► http://server-ip:5173 (Vite)
-                   │
-                   └── /api/* (Vite proxy) ──► http://127.0.0.1:5174 (FastAPI)
-                                                        │
-                                                        └── http://127.0.0.1:8000 (SONiC MCP server)
-                                                                                     │
-                                                                                     ├── RESTCONF :443 ──► SONiC VMs
-                                                                                     └── SSH :22       ──► SONiC VMs
+┌───────────┐   HTTP   ┌───────────────────────────────┐   HTTP   ┌───────────────────┐
+│  Browser  │ ───────> │ SONiC MCP Community Client    │ ───────> │  MCP Server       │
+│  (UI)     │ <─────── │  FastAPI backend on :5174     │ <─────── │  /tools, /invoke, │
+│           │          │  Serves built React from /    │          │  /ready, /metrics │
+└───────────┘          │  Thin /api/* proxy            │          └──────────┬────────┘
+                       │  NL router + LLM fallback     │                     │ 3 transports
+                       └───────────────────────────────┘                     ▼
+                                                                 ┌───────────────────┐
+                                                                 │  SONiC switches   │
+                                                                 └───────────────────┘
 ```
 
-## Related
+The client holds no device credentials — those stay on the MCP server.
+The client's only persistent state is `settings.json` (LLM preferences,
+an optional OpenAI key).
 
-- `../sonic-mcp-community-server/PLAN.md` — server-side phased plan
-- `../sonic-mcp-community-server/CLIENT_CONTRACT.md` — protocol spec the client consumes
+---
+
+## Quickstart
+
+Three ways, from easiest to most hands-on.
+
+### A. Docker (recommended)
+
+**Pull the published image** (no build required):
+
+```bash
+docker pull extremecanada/sonic-mcp-community-client:latest
+```
+
+Or build from source:
+
+```bash
+cp backend/.env.example .env
+# Edit .env and set MCP_BASE_URL to your server's URL
+docker compose up -d --build
+open http://<host>:5174/
+```
+
+The shipped `docker-compose.yml` references
+`extremecanada/sonic-mcp-community-client:latest` by default, so
+`docker compose up -d` pulls from Docker Hub if no local image is built.
+
+See [`README.docker.md`](./README.docker.md) for install / stop / update
+/ rebuild details, networking patterns, upgrade procedure,
+troubleshooting.
+
+### B. systemd (bare-metal)
+
+```bash
+# 1. Backend deps
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # edit MCP_BASE_URL
+
+# 2. Build the frontend once
+cd ../frontend
+npm ci && npm run build
+
+# 3. Install the systemd unit
+sudo cp ../systemd/sonic-mcp-client.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sonic-mcp-client.service
+```
+
+See [`systemd/README.md`](./systemd/README.md) for operations.
+
+### C. Manual / dev mode
+
+```bash
+# Single-port production mode
+cd backend && source .venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 5174
+# Open http://<host>:5174/
+
+# With Vite hot-reload (two terminals)
+cd backend && uvicorn main:app --port 5174 --reload
+cd frontend && npm run dev   # http://<host>:5173
+```
+
+---
+
+## Configuration
+
+All settings are env vars loaded from `.env`:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_BASE_URL` | `http://127.0.0.1:8000` | URL of the SONiC MCP Community Server |
+| `MCP_TIMEOUT_SECONDS` | `30` | HTTP timeout for upstream calls |
+| `SONIC_MCP_CLIENT_PORT` | `5174` | Port to bind uvicorn to (in Docker this is the `EXPOSE`/`-p` mapping) |
+| `OPENAI_API_KEY` | — | Optional — preferred over the UI-set key if present |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default OpenAI model |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint when enabled |
+| `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Default Ollama model |
+
+Runtime settings (LLM provider pick, API keys, Ollama model choice) can
+also be changed live from the **Settings** view; they're persisted to
+`backend/data/settings.json` (mode 0600) so they survive restarts.
+
+---
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| **⌘K** / **Ctrl-K** | Open command palette (fuzzy search tools / views / switches) |
+| `Esc` | Close modal / command palette |
+| `↵` | Submit in AI Console |
+| `↑ ↓` | Navigate palette items |
+
+---
+
+## Adding a widget / NL pattern
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). In short:
+
+1. Write `frontend/src/widgets/MyToolWidget.tsx` and register it in
+   `widgets/index.tsx` (one line in the REGISTRY map).
+2. Add a regex pattern block to `backend/nl_router.py` so free-text
+   prompts route to your tool, plus an input-extraction clause if the
+   tool has required args.
+3. Add an entry to `HelpWidget`'s `TOOL_TO_QUERY` so the Help view gets
+   a clickable "Run" button.
+
+The client auto-discovers tools from the server's catalog — there's no
+list to hand-edit when the server adds a new tool. Widgets are opt-in
+enhancements; anything without a dedicated widget falls back to a
+pretty JSON view.
+
+---
+
+## Development
+
+```bash
+cd frontend
+npm ci
+npm run lint       # eslint
+npm run build      # tsc -b && vite build
+npm run dev        # Vite dev server at :5173
+```
+
+CI (GitHub Actions) lint + build + docker image build on every PR.
+
+---
+
+## License
+
+Apache-2.0. See [`LICENSE`](./LICENSE).

@@ -1,30 +1,17 @@
 /**
- * Settings view — dedicated area for configuring LLM providers and other
- * runtime options. Values are persisted in `backend/settings.json` and
- * survive `systemctl restart`.
- *
- * Currently two providers are supported:
- *   - OpenAI   (cloud, gpt-4o-mini by default; best quality)
- *   - Ollama   (local, qwen2.5:3b-instruct by default; air-gapped / free)
- *
- * Precedence used by the backend at read time:
- *   settings.json  >  environment variables (.env)  >  hardcoded defaults
- *
- * The "Source" badge next to each effective value lets the user see
- * whether a given setting is coming from persisted state or the
- * environment.
+ * Settings view — configure LLM providers. Persisted in backend/settings.json.
+ * Precedence at read time: settings.json → env (.env) → hardcoded defaults.
  */
 
-import {useEffect, useState} from "react";
-import {FG} from "./lib/figmaStyles";
-import {Badge, Button, ErrorBanner, Loading, StatusPill} from "./shared";
-import {KvGrid, Section} from "./widgets/common";
-import {getSettings, patchSettings, type SettingsView as S} from "./lib/api";
+import {useEffect, useState, type ReactNode} from "react";
+import {ChevronDown} from "lucide-react";
+import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
+import {cn} from "./lib/cn";
+import {ErrorBanner, Loading} from "./shared";
+import {getSettings, patchSettings, getFabricIntent, putFabricIntent, type SettingsView as S, type FabricIntentView} from "./lib/api";
 
-// ─── Ollama model presets ─────────────────────────────────────
-// Curated list of commonly-installed Ollama models, ordered by typical use.
-// Sizes are approximate download sizes (quantized). "recommended" marks the
-// one we've tested for JSON tool-selection (small + reliable).
+// Curated Ollama model presets. "recommended" marks the one we've tested for
+// JSON tool-selection (small + reliable on a CPU-only lab host).
 const OLLAMA_PRESETS = [
   {value: "qwen2.5:3b-instruct", label: "Qwen 2.5 3B (instruct)", size: "~2 GB",  recommended: true},
   {value: "qwen2.5:7b-instruct", label: "Qwen 2.5 7B (instruct)", size: "~4.7 GB"},
@@ -45,7 +32,6 @@ export function SettingsView() {
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
-  // Controlled form state — populated from the server view; only sent on Save.
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiModel, setOpenaiModel] = useState("");
   const [ollamaEnabled, setOllamaEnabled] = useState(false);
@@ -57,7 +43,6 @@ export function SettingsView() {
     try {
       const s = await getSettings();
       setData(s);
-      // Sync form state with loaded effective values.
       setOpenaiKey("");
       setOpenaiModel(s.openai.model);
       setOllamaEnabled(s.ollama.enabled);
@@ -78,7 +63,6 @@ export function SettingsView() {
       const s = await patchSettings(update);
       setData(s);
       setFlash(msg);
-      // Reset OpenAI key field after a successful save (don't echo secrets back)
       if (update.openai && "api_key" in update.openai) setOpenaiKey("");
       setTimeout(() => setFlash(null), 3000);
     } catch (e: any) {
@@ -89,51 +73,41 @@ export function SettingsView() {
   }
 
   if (!data) {
-    return <div style={{padding: 20}}>{err ? <ErrorBanner>{err}</ErrorBanner> : <Loading />}</div>;
+    return <div className="p-5">{err ? <ErrorBanner>{err}</ErrorBanner> : <Loading />}</div>;
   }
 
   return (
-    <div>
-      <h1 style={{margin: "0 0 4px 0", color: FG.titleColor, fontSize: 22, fontWeight: 600}}>
-        Settings
-      </h1>
-      <div style={{fontSize: 12, color: FG.mutedColor, marginBottom: 18}}>
-        Persisted at <code>{data.storage_path}</code> (mode 0600).
-        Precedence: <b>settings.json → .env → default</b>.
+    <div className="mx-auto max-w-5xl space-y-4">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-gray-100">Settings</h1>
+        <p className="mt-2 text-sm text-gray-400">
+          Persisted at <code className="rounded bg-white/[0.04] px-1.5 py-0.5 text-xs">{data.storage_path}</code> (mode 0600).
+          Precedence: <b>settings.json → .env → default</b>.
+        </p>
       </div>
 
       {flash && (
-        <div style={{
-          marginBottom: 14,
-          padding: "8px 12px",
-          background: FG.successBg,
-          border: `1px solid ${FG.successBorder}`,
-          color: FG.successGreen,
-          borderRadius: 8,
-          fontSize: 13,
-        }}>{flash}</div>
+        <div className="rounded-md border border-green-500/20 bg-green-500/10 px-3 py-2 text-sm text-green-300">
+          {flash}
+        </div>
       )}
-      {err && <div style={{marginBottom: 14}}><ErrorBanner>{err}</ErrorBanner></div>}
+      {err && <ErrorBanner>{err}</ErrorBanner>}
 
-      {/* Provider selector — the explicit "which AI am I using" toggle */}
-      <section style={panelStyle}>
-        <header style={panelHeader}>
-          <div>
-            <h2 style={h2Style}>Active LLM provider</h2>
-            <div style={{fontSize: 12, color: FG.mutedColor}}>
-              Choose which provider the NL router falls back to when regex doesn't match.
-              "Auto" picks the best available — OpenAI first, then Ollama.
-            </div>
-          </div>
-          <StatusPill tone={
-            data.effective_provider === "openai" ? "good" :
-            data.effective_provider === "ollama" ? "info" : "neutral"
-          }>
-            🤖 active: {data.effective_provider ?? "none"}
-          </StatusPill>
-        </header>
+      {/* Active provider */}
+      <Section
+        title="Active LLM provider"
+        badge={<Chip tone={
+          data.effective_provider === "openai" ? "good" :
+          data.effective_provider === "ollama" ? "info" : "neutral"
+        }>active: {data.effective_provider ?? "none"}</Chip>}
+        defaultOpen
+      >
+        <p className="mb-4 text-sm text-gray-400">
+          Choose which provider the NL router falls back to when regex doesn't match.
+          "Auto" picks the best available — OpenAI first, then Ollama.
+        </p>
 
-        <div style={{display: "flex", flexDirection: "column", gap: 8}}>
+        <div className="flex flex-col gap-3">
           <ProviderRadio
             value="auto"
             selected={data.preferred_provider}
@@ -147,11 +121,7 @@ export function SettingsView() {
             value="openai"
             selected={data.preferred_provider}
             title={`OpenAI (${data.openai.model})`}
-            subtitle={
-              data.openai.configured
-                ? "Cloud — ready to use"
-                : "No API key configured — pin to this only after saving a key below"
-            }
+            subtitle={data.openai.configured ? "Cloud — ready to use" : "No API key configured — save one below first"}
             available={data.openai.configured}
             onPick={(v) => apply({preferred_provider: v}, `preferred provider → ${v}`)}
             busy={busy}
@@ -160,104 +130,91 @@ export function SettingsView() {
             value="ollama"
             selected={data.preferred_provider}
             title={`Ollama (${data.ollama.model})`}
-            subtitle={
-              data.ollama.enabled
-                ? `Local — ${data.ollama.base_url}`
-                : "Not enabled — turn on in the Ollama panel below first"
-            }
+            subtitle={data.ollama.enabled ? `Local — ${data.ollama.base_url}` : "Not enabled — turn on in the Ollama panel below first"}
             available={data.ollama.enabled}
             onPick={(v) => apply({preferred_provider: v}, `preferred provider → ${v}`)}
             busy={busy}
           />
         </div>
 
-        {/* Explicit warning if a pinned provider isn't usable */}
         {data.preferred_provider === "openai" && !data.openai.configured && (
-          <div style={{
-            marginTop: 12,
-            padding: "8px 12px",
-            background: FG.warningBg,
-            border: `1px solid ${FG.warningBorder}`,
-            color: FG.warningYellow,
-            borderRadius: 8,
-            fontSize: 12,
-          }}>
-            ⚠ Pinned to OpenAI, but no API key is set. LLM fallback is effectively disabled until you save a key below.
-          </div>
+          <Warn>⚠ Pinned to OpenAI, but no API key is set. LLM fallback is effectively disabled until you save a key below.</Warn>
         )}
         {data.preferred_provider === "ollama" && !data.ollama.enabled && (
-          <div style={{
-            marginTop: 12,
-            padding: "8px 12px",
-            background: FG.warningBg,
-            border: `1px solid ${FG.warningBorder}`,
-            color: FG.warningYellow,
-            borderRadius: 8,
-            fontSize: 12,
-          }}>
-            ⚠ Pinned to Ollama, but it isn't enabled. Enable it in the Ollama panel below.
-          </div>
+          <Warn>⚠ Pinned to Ollama, but it isn't enabled. Enable it in the Ollama panel below.</Warn>
         )}
-      </section>
+      </Section>
 
-      {/* OpenAI panel */}
-      <section style={panelStyle}>
-        <header style={panelHeader}>
+      {/* OpenAI */}
+      <Section
+        title="OpenAI"
+        badge={<Chip tone={data.openai.configured ? "good" : "neutral"}>
+          {data.openai.configured ? "configured" : "not configured"}
+        </Chip>}
+      >
+        <p className="mb-5 text-sm text-gray-400">
+          Cloud LLM. Fastest path to good results. Requires an API key from{" "}
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
+            platform.openai.com
+          </a>.
+        </p>
+
+        <div className="mb-5 grid grid-cols-2 gap-6">
           <div>
-            <h2 style={h2Style}>OpenAI</h2>
-            <div style={{fontSize: 12, color: FG.mutedColor}}>
-              Cloud LLM. Fastest path to good results. Requires an API key from{" "}
-              <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{color: FG.titleColor}}>
-                platform.openai.com
-              </a>.
+            <div className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">API key</div>
+            {data.openai.key_preview ? (
+              <div className="flex items-center gap-2">
+                <code className="font-mono text-sm text-gray-200">{data.openai.key_preview}</code>
+                <SourceBadge>{data.openai.key_source}</SourceBadge>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                no key set
+                <SourceBadge>{data.openai.key_source ?? "default"}</SourceBadge>
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">Model</div>
+            <div className="flex items-center gap-2">
+              <code className="font-mono text-sm text-gray-200">{data.openai.model}</code>
+              <SourceBadge>{data.openai.model_source}</SourceBadge>
             </div>
           </div>
-          <StatusPill tone={data.openai.configured ? "good" : "neutral"}>
-            {data.openai.configured ? "configured" : "not configured"}
-          </StatusPill>
-        </header>
-
-        <KvGrid columns={2} rows={[
-          {label: "API key", value: (
-            data.openai.key_preview
-              ? <span style={{fontFamily: "ui-monospace, monospace"}}>{data.openai.key_preview} <Badge>{data.openai.key_source}</Badge></span>
-              : <span style={{color: FG.mutedColor}}>no key set <Badge>{data.openai.key_source ?? "default"}</Badge></span>
-          )},
-          {label: "Model", value: <span style={{fontFamily: "ui-monospace, monospace"}}>{data.openai.model} <Badge>{data.openai.model_source}</Badge></span>},
-        ]} />
-
-        <div style={{height: 14}} />
-
-        <div style={{display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center"}}>
-          <label htmlFor="openai-key" style={labelStyle}>New API key</label>
-          <input
-            id="openai-key"
-            type="password"
-            placeholder="sk-…"
-            value={openaiKey}
-            onChange={(e) => setOpenaiKey(e.target.value)}
-            style={inputStyle}
-          />
-          <label htmlFor="openai-model" style={labelStyle}>Model</label>
-          <input
-            id="openai-model"
-            type="text"
-            placeholder="gpt-4o-mini"
-            value={openaiModel}
-            onChange={(e) => setOpenaiModel(e.target.value)}
-            style={inputStyle}
-          />
         </div>
 
-        <div style={{display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end"}}>
+        <div className="space-y-4">
+          <Field label="New API key" id="openai-key">
+            <input
+              id="openai-key"
+              type="password"
+              placeholder="sk-…"
+              value={openaiKey}
+              onChange={(e) => setOpenaiKey(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </Field>
+          <Field label="Model" id="openai-model">
+            <input
+              id="openai-model"
+              type="text"
+              placeholder="gpt-4o-mini"
+              value={openaiModel}
+              onChange={(e) => setOpenaiModel(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </Field>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2">
           {data.openai.configured && (
-            <Button
-              variant="secondary"
+            <button
               disabled={busy}
               onClick={() => apply({openai: {api_key: ""}}, "OpenAI key cleared")}
-            >Clear key</Button>
+              className="rounded border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-300 hover:bg-white/[0.08] disabled:opacity-50"
+            >Clear key</button>
           )}
-          <Button
+          <button
             disabled={busy || (!openaiKey.trim() && openaiModel === data.openai.model)}
             onClick={() => {
               const update: Record<string, any> = {};
@@ -265,155 +222,376 @@ export function SettingsView() {
               if (openaiModel.trim() && openaiModel !== data.openai.model) update.model = openaiModel.trim();
               return apply({openai: update}, "OpenAI settings saved");
             }}
-          >{busy ? "…" : "Save OpenAI"}</Button>
+            className="rounded bg-orange-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+          >{busy ? "…" : "Save OpenAI"}</button>
         </div>
 
-        <div style={noteStyle}>
-          Key is stored in <code>settings.json</code> on the backend. Never committed
-          (already in <code>.gitignore</code>), never sent anywhere except the OpenAI
-          API when the LLM fallback fires. This host has no auth — anyone on this
-          network can read or change these settings.
+        <p className="mt-4 text-xs text-gray-500">
+          Key is stored in <code className="rounded bg-white/[0.04] px-1 py-0.5">settings.json</code> on the backend. Never committed
+          (already in <code className="rounded bg-white/[0.04] px-1 py-0.5">.gitignore</code>), never sent anywhere except the OpenAI
+          API when the LLM fallback fires. This host has no auth — anyone on this network can read or change these settings.
+        </p>
+      </Section>
+
+      {/* Ollama */}
+      <Section
+        title="Ollama (local LLM)"
+        badge={<Chip tone={data.ollama.enabled ? "info" : "neutral"}>
+          {data.ollama.enabled ? "enabled" : "disabled"}
+        </Chip>}
+      >
+        <p className="mb-5 text-sm text-gray-400">
+          Runs an LLM on-host or on a nearby machine. Free, air-gapped, slower.
+          Quality depends on the model you pick.
+        </p>
+
+        <div className="mb-5">
+          <div className="mb-1.5 text-xs uppercase tracking-wider text-gray-500">Base URL</div>
+          <code className="font-mono text-sm text-gray-200">{data.ollama.base_url}</code>
         </div>
-      </section>
 
-      {/* Ollama panel */}
-      <section style={panelStyle}>
-        <header style={panelHeader}>
-          <div>
-            <h2 style={h2Style}>Ollama (local LLM)</h2>
-            <div style={{fontSize: 12, color: FG.mutedColor}}>
-              Runs an LLM on-host or on a nearby machine. Free, air-gapped, slower.
-              Quality depends on the model you pick.
-            </div>
-          </div>
-          <StatusPill tone={data.ollama.enabled ? "info" : "neutral"}>
-            {data.ollama.enabled ? "enabled" : "disabled"}
-          </StatusPill>
-        </header>
-
-        <KvGrid columns={2} rows={[
-          {label: "Enabled",  value: <span>{data.ollama.enabled ? "yes" : "no"} <Badge>{data.ollama.enabled_source}</Badge></span>},
-          {label: "Base URL", value: <span style={{fontFamily: "ui-monospace, monospace"}}>{data.ollama.base_url}</span>},
-          {label: "Model",    value: <span style={{fontFamily: "ui-monospace, monospace"}}>{data.ollama.model}</span>},
-        ]} />
-
-        <div style={{height: 14}} />
-
-        <div style={{display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "center"}}>
-          <label htmlFor="ollama-enabled" style={labelStyle}>Enable</label>
-          <label style={{display: "flex", alignItems: "center", gap: 8, color: FG.bodyColor, fontSize: 13}}>
+        <div className="space-y-4">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-300">
             <input
-              id="ollama-enabled"
               type="checkbox"
               checked={ollamaEnabled}
               onChange={(e) => setOllamaEnabled(e.target.checked)}
+              className="h-4 w-4 rounded accent-blue-500"
             />
-            <span style={{color: FG.mutedColor}}>use Ollama when OpenAI isn't configured</span>
+            Use Ollama when OpenAI isn't configured
           </label>
 
-          <label htmlFor="ollama-url" style={labelStyle}>Base URL</label>
-          <input
-            id="ollama-url"
-            type="text"
-            placeholder="http://127.0.0.1:11434"
-            value={ollamaUrl}
-            onChange={(e) => setOllamaUrl(e.target.value)}
-            style={inputStyle}
-          />
+          <Field label="Base URL" id="ollama-url">
+            <input
+              id="ollama-url"
+              type="text"
+              placeholder="http://127.0.0.1:11434"
+              value={ollamaUrl}
+              onChange={(e) => setOllamaUrl(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </Field>
 
-          <label htmlFor="ollama-model" style={labelStyle}>Model</label>
-          <div style={{display: "flex", flexDirection: "column", gap: 6}}>
-            <select
-              id="ollama-model"
-              value={isOllamaPreset(ollamaModel) ? ollamaModel : "__custom__"}
-              onChange={(e) => {
-                if (e.target.value === "__custom__") {
-                  // Keep whatever's there, or default if nothing sensible
-                  setOllamaModel(ollamaModel || "qwen2.5:3b-instruct");
-                } else {
-                  setOllamaModel(e.target.value);
-                }
-              }}
-              style={{...inputStyle, fontFamily: "inherit"}}
-            >
-              {OLLAMA_PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label} — {p.size}{p.recommended ? "  ⭐" : ""}
-                </option>
-              ))}
-              <option value="__custom__">Custom… (enter your own below)</option>
-            </select>
-            {!isOllamaPreset(ollamaModel) && (
-              <input
-                type="text"
-                placeholder="e.g. mixtral:8x7b"
-                value={ollamaModel}
-                onChange={(e) => setOllamaModel(e.target.value)}
-                style={inputStyle}
-              />
-            )}
-          </div>
+          <Field label="Model" id="ollama-model">
+            <div className="space-y-2">
+              <select
+                id="ollama-model"
+                value={isOllamaPreset(ollamaModel) ? ollamaModel : "__custom__"}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") {
+                    setOllamaModel(ollamaModel || "qwen2.5:3b-instruct");
+                  } else {
+                    setOllamaModel(e.target.value);
+                  }
+                }}
+                className={INPUT_CLS}
+              >
+                {OLLAMA_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label} — {p.size}{p.recommended ? "  ⭐" : ""}
+                  </option>
+                ))}
+                <option value="__custom__">Custom… (enter your own below)</option>
+              </select>
+              {!isOllamaPreset(ollamaModel) && (
+                <input
+                  type="text"
+                  placeholder="e.g. mixtral:8x7b"
+                  value={ollamaModel}
+                  onChange={(e) => setOllamaModel(e.target.value)}
+                  className={INPUT_CLS}
+                />
+              )}
+            </div>
+          </Field>
         </div>
 
-        <div style={{display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end"}}>
-          <Button
+        <div className="mt-5 flex justify-end">
+          <button
             disabled={busy}
             onClick={() => apply({ollama: {
               enabled: ollamaEnabled,
               base_url: ollamaUrl,
               model: ollamaModel,
             }}, "Ollama settings saved")}
-          >{busy ? "…" : "Save Ollama"}</Button>
+            className="rounded bg-orange-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+          >{busy ? "…" : "Save Ollama"}</button>
         </div>
 
-        <Section title={`How to install Ollama + pull ${ollamaModel || "a model"}`}>
-          <div style={{
-            background: "var(--bg0)",
-            border: `1px solid ${FG.divider}`,
-            borderRadius: 8,
-            padding: 12,
-            fontFamily: "ui-monospace, monospace",
-            fontSize: 12,
-            color: FG.bodyColor,
-            lineHeight: 1.6,
-          }}>
-            <div style={{color: FG.mutedColor, marginBottom: 4}}># 1. Install (Linux / macOS):</div>
-            <div>curl -fsSL https://ollama.com/install.sh | sh</div>
-            <div style={{color: FG.mutedColor, marginTop: 10, marginBottom: 4}}># 2. Pull the selected model ({ollamaModel || "pick one above"}):</div>
-            <div>ollama pull {ollamaModel || "<model>"}</div>
-            <div style={{color: FG.mutedColor, marginTop: 10, marginBottom: 4}}># 3. Ollama auto-starts a local service. Verify it's running:</div>
-            <div>curl http://127.0.0.1:11434/api/tags</div>
-            <div style={{color: FG.mutedColor, marginTop: 10, marginBottom: 4}}># 4. Enable Ollama above (checkbox + Save), then pin it in the</div>
-            <div style={{color: FG.mutedColor}}>#    "Active LLM provider" panel at the top of this page.</div>
+        <div className="mt-5 rounded-lg border border-white/[0.06] bg-[#0d1220] p-4">
+          <div className="mb-2 text-xs uppercase tracking-wider text-gray-500">
+            How to install Ollama + pull {ollamaModel || "a model"}
           </div>
-        </Section>
+          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-400">
+{`# 1. Install (Linux / macOS):
+curl -fsSL https://ollama.com/install.sh | sh
 
-        <div style={noteStyle}>
-          If this backend runs on a different host than Ollama, set Base URL
-          accordingly. CORS isn't a concern (the backend makes the call, not
-          the browser).
+# 2. Pull the selected model (${ollamaModel || "<model>"}):
+ollama pull ${ollamaModel || "<model>"}
+
+# 3. Ollama auto-starts a local service. Verify it's running:
+curl http://127.0.0.1:11434/api/tags
+
+# 4. Enable Ollama above (checkbox + Save), then pin it in the
+#    "Active LLM provider" panel at the top of this page.`}
+          </pre>
         </div>
-      </section>
 
-      {/* Future providers hint */}
-      <section style={panelStyle}>
-        <header style={panelHeader}>
-          <div>
-            <h2 style={h2Style}>Other providers</h2>
-            <div style={{fontSize: 12, color: FG.mutedColor}}>
-              Anthropic Claude, Gemini, Mistral Cloud, etc. — not wired yet.
-              The settings schema is extensible; adding a new provider is a
-              single new client class in <code>backend/llm.py</code>.
-            </div>
-          </div>
-          <StatusPill tone="neutral">planned</StatusPill>
-        </header>
-      </section>
+        <p className="mt-4 text-xs text-gray-500">
+          If this backend runs on a different host than Ollama, set Base URL accordingly. CORS isn't a concern (the backend makes the call, not the browser).
+        </p>
+      </Section>
+
+      {/* Fabric intent editor */}
+      <FabricIntentSection />
+
+      {/* Other providers */}
+      <Section
+        title="Other providers"
+        badge={<Chip tone="info">planned</Chip>}
+      >
+        <p className="text-sm text-gray-400">
+          Anthropic Claude, Gemini, Mistral Cloud, etc. — not wired yet. The settings schema is extensible;
+          adding a new provider is a single new client class in <code className="rounded bg-white/[0.04] px-1 py-0.5">backend/llm.py</code>.
+        </p>
+      </Section>
     </div>
   );
 }
 
-// ─── Provider radio (used by Active-provider section above) ─────
+// ─── Fabric Intent editor section ─────────────────────────────
+
+function FabricIntentSection() {
+  const [view, setView] = useState<FabricIntentView | null>(null);
+  const [text, setText] = useState<string>("");
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  async function load() {
+    setLoadErr(null);
+    try {
+      const v = await getFabricIntent();
+      setView(v);
+      const body = v.raw
+        ? v.raw
+        : v.content
+          ? JSON.stringify(v.content, null, 2)
+          : JSON.stringify(_EXAMPLE, null, 2);
+      setText(body);
+      setDirty(false);
+    } catch (e: any) {
+      setLoadErr(e?.message ?? String(e));
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function onTextChange(v: string) {
+    setText(v);
+    setDirty(true);
+    setFlash(null);
+    setSaveErr(null);
+  }
+
+  function validateLocal(): boolean {
+    setSaveErr(null);
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        setSaveErr("intent must be a JSON object at the top level (e.g. {\"switches\": {…}})");
+        return false;
+      }
+      setFlash("JSON is valid");
+      setTimeout(() => setFlash(null), 2000);
+      return true;
+    } catch (e: any) {
+      setSaveErr(`invalid JSON: ${e?.message ?? e}`);
+      return false;
+    }
+  }
+
+  async function save() {
+    if (!validateLocal()) return;
+    setBusy(true);
+    setFlash(null);
+    setSaveErr(null);
+    try {
+      const res = await putFabricIntent({raw: text});
+      setFlash(`saved (${res.size_bytes} bytes)`);
+      setDirty(false);
+      // Re-fetch so parse_error clears / size updates.
+      await load();
+      setTimeout(() => setFlash(null), 3000);
+    } catch (e: any) {
+      setSaveErr(e?.message ?? String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const existsBadge = !view
+    ? <Chip tone="neutral">loading</Chip>
+    : view.parse_error
+      ? <Chip tone="neutral">invalid JSON on disk</Chip>
+      : view.exists
+        ? <Chip tone="good">loaded</Chip>
+        : <Chip tone="neutral">no file</Chip>;
+
+  return (
+    <Section title="Fabric intent" badge={existsBadge}>
+      <p className="mb-4 text-sm text-gray-400">
+        The JSON file consumed by <code className="rounded bg-white/[0.04] px-1 py-0.5">validate_fabric_vs_intent</code>.
+        Declare expected ASN, BGP peers, and interface IP/MTU per switch; the tool reports drift against live state.
+      </p>
+
+      {loadErr && <ErrorBanner>{loadErr}</ErrorBanner>}
+      {view && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="uppercase tracking-wider text-gray-500">Path</span>
+          <code className="rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-gray-200">{view.path}</code>
+          {view.source && <Chip tone="neutral">source: {view.source}</Chip>}
+          {view.size_bytes != null && <span className="text-gray-500">{view.size_bytes} bytes</span>}
+        </div>
+      )}
+
+      {view?.parse_error && (
+        <div className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          on-disk file has a syntax error: {view.parse_error}. Fix it here and click Save.
+        </div>
+      )}
+
+      <textarea
+        value={text}
+        onChange={(e) => onTextChange(e.target.value)}
+        spellCheck={false}
+        className={cn(
+          "block min-h-[320px] w-full resize-y rounded border border-white/10 bg-[#0d1220] px-3 py-2",
+          "font-mono text-xs leading-relaxed text-gray-200 placeholder:text-gray-500",
+          "focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-white/20",
+        )}
+      />
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="text-xs text-gray-500">
+          {dirty ? "unsaved changes" : "no unsaved changes"}
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={load}
+            disabled={busy}
+            className="rounded border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-300 hover:bg-white/[0.08] disabled:opacity-50"
+          >Reload</button>
+          <button
+            onClick={validateLocal}
+            disabled={busy}
+            className="rounded border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-300 hover:bg-white/[0.08] disabled:opacity-50"
+          >Validate JSON</button>
+          <button
+            onClick={save}
+            disabled={busy || !dirty}
+            className="rounded bg-orange-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600 disabled:opacity-50"
+          >{busy ? "…" : "Save intent"}</button>
+        </div>
+      </div>
+
+      {flash && (
+        <div className="mt-3 rounded-md border border-green-500/20 bg-green-500/10 px-3 py-2 text-xs text-green-300">
+          {flash}
+        </div>
+      )}
+      {saveErr && (
+        <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          {saveErr}
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-gray-500">
+        Override the path at runtime by setting <code className="rounded bg-white/[0.04] px-1 py-0.5">SONIC_FABRIC_INTENT_PATH</code> on
+        the server. In Docker, bind-mount your intent file into <code className="rounded bg-white/[0.04] px-1 py-0.5">/app/config</code>.
+      </p>
+    </Section>
+  );
+}
+
+const _EXAMPLE = {
+  switches: {
+    "10.46.11.50": {
+      asn: 65100,
+      hostname: "vm1",
+      expected_bgp_peers: [{peer_ip: "192.168.1.2", remote_asn: 65100}],
+      expected_interfaces: [{name: "Ethernet0", address: "192.168.1.1/30", mtu: 9100}],
+    },
+  },
+};
+
+// ─── Section: Radix collapsible panel ───────────────────────────
+function Section({title, badge, children, defaultOpen = false}: {
+  title: string;
+  badge?: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <CollapsiblePrimitive.Root
+      open={open}
+      onOpenChange={setOpen}
+      className="overflow-hidden rounded-lg border border-white/[0.08] bg-[#1a2332]"
+    >
+      <CollapsiblePrimitive.Trigger
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-[#1d2738]"
+      >
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-gray-100">{title}</h2>
+          {badge}
+        </div>
+        <ChevronDown className={cn("h-5 w-5 text-gray-400 transition-transform", open && "rotate-180")} />
+      </CollapsiblePrimitive.Trigger>
+      <CollapsiblePrimitive.Content className="cols-anim overflow-hidden">
+        <div className="border-t border-white/[0.06] px-5 pb-6 pt-5">
+          {children}
+        </div>
+      </CollapsiblePrimitive.Content>
+    </CollapsiblePrimitive.Root>
+  );
+}
+
+// ─── Field wrapper ────────────────────────────────────────────
+function Field({label, id, children}: {label: string; id?: string; children: ReactNode}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm text-gray-300">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+// ─── Chip / badge variants ────────────────────────────────────
+function Chip({tone, children}: {tone: "good" | "info" | "neutral"; children: ReactNode}) {
+  const cls = tone === "good"
+    ? "bg-green-500/10 text-green-300 border-green-500/20"
+    : tone === "info"
+    ? "bg-blue-500/10 text-blue-300 border-blue-500/20"
+    : "bg-white/[0.04] text-gray-400 border-white/10";
+  return <span className={cn("rounded border px-2.5 py-1 text-xs", cls)}>{children}</span>;
+}
+
+function SourceBadge({children}: {children: ReactNode}) {
+  return <span className="rounded bg-white/[0.06] px-2 py-0.5 text-[10px] uppercase tracking-wider text-gray-400">{children}</span>;
+}
+
+function Warn({children}: {children: ReactNode}) {
+  return (
+    <div className="mt-4 rounded-md border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-200">
+      {children}
+    </div>
+  );
+}
+
+// ─── Provider radio card ───────────────────────────────────────
 function ProviderRadio(props: {
   value: "openai" | "ollama" | "auto";
   selected: "openai" | "ollama" | "auto";
@@ -427,101 +605,37 @@ function ProviderRadio(props: {
   const dim = !props.available && props.value !== "auto";
   return (
     <label
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 12,
-        padding: "10px 12px",
-        background: active ? FG.rowSelectedBg : FG.subtleBg,
-        border: `1px solid ${active ? FG.rowSelectedBorder : FG.subtleBorder}`,
-        borderRadius: 10,
-        cursor: props.busy ? "wait" : "pointer",
-        transition: FG.transition,
-        opacity: dim ? 0.6 : 1,
-      }}
+      className={cn(
+        "flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-4 transition-colors",
+        active
+          ? "border-blue-500/40 bg-[#0d1220]"
+          : "border-white/10 bg-[#0d1220]/50 hover:border-white/20",
+        dim && "opacity-60",
+        props.busy && "cursor-wait",
+      )}
     >
-      <input
-        type="radio"
-        name="preferred-provider"
-        checked={active}
-        disabled={props.busy}
-        onChange={() => props.onPick(props.value)}
-        style={{marginTop: 3}}
-      />
-      <div style={{flex: 1, minWidth: 0}}>
-        <div style={{
-          fontSize: 14,
-          fontWeight: 600,
-          color: active ? FG.titleColor : FG.bodyColor,
-        }}>{props.title}</div>
-        <div style={{fontSize: 12, color: FG.mutedColor, marginTop: 2}}>
-          {props.subtitle}
+      <div className="flex items-center gap-3">
+        <input
+          type="radio"
+          name="preferred-provider"
+          checked={active}
+          disabled={props.busy}
+          onChange={() => props.onPick(props.value)}
+          className="h-4 w-4 accent-blue-500"
+        />
+        <div>
+          <div className={cn("text-sm font-medium", active ? "text-gray-100" : "text-gray-200")}>
+            {props.title}
+          </div>
+          <div className="mt-0.5 text-xs text-gray-400">{props.subtitle}</div>
         </div>
       </div>
       {active && (
-        <span style={{
-          fontSize: 11,
-          color: FG.successGreen,
-          background: FG.successBg,
-          border: `1px solid ${FG.successBorder}`,
-          borderRadius: 999,
-          padding: "2px 8px",
-          fontWeight: 600,
-          whiteSpace: "nowrap",
-        }}>selected</span>
+        <span className="rounded bg-green-500/10 px-2 py-1 text-xs text-green-300">selected</span>
       )}
     </label>
   );
 }
 
-// ─── styles ─────────────────────────────────────────────────────
-const panelStyle: React.CSSProperties = {
-  background: FG.containerBg,
-  border: `1px solid ${FG.containerBorder}`,
-  borderRadius: FG.containerRadius,
-  padding: 16,
-  marginBottom: 16,
-  boxShadow: FG.containerShadow,
-};
-
-const panelHeader: React.CSSProperties = {
-  display: "flex",
-  alignItems: "flex-start",
-  justifyContent: "space-between",
-  gap: 12,
-  marginBottom: 14,
-};
-
-const h2Style: React.CSSProperties = {
-  margin: "0 0 2px 0",
-  color: FG.headingColor,
-  fontSize: 16,
-  fontWeight: 600,
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: FG.bodyColor,
-  fontFamily: "ui-monospace, monospace",
-};
-
-const inputStyle: React.CSSProperties = {
-  background: FG.inputBg,
-  border: `1px solid ${FG.inputBorder}`,
-  color: FG.inputColor,
-  borderRadius: 8,
-  padding: "6px 10px",
-  fontSize: 13,
-  fontFamily: "ui-monospace, monospace",
-};
-
-const noteStyle: React.CSSProperties = {
-  marginTop: 14,
-  padding: "8px 12px",
-  background: FG.subtleBg,
-  border: `1px solid ${FG.subtleBorder}`,
-  borderRadius: 8,
-  color: FG.mutedColor,
-  fontSize: 12,
-  lineHeight: 1.5,
-};
+// ─── Shared input class ───────────────────────────────────────
+const INPUT_CLS = "w-full rounded border border-white/10 bg-[#0d1220] px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-white/20";

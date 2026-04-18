@@ -109,6 +109,18 @@ async def _mcp_post(
         raise HTTPException(status_code=502, detail=f"MCP upstream error: {e}") from e
 
 
+async def _mcp_put(
+    path: str,
+    *,
+    json_body: Dict[str, Any],
+    headers: Optional[Dict[str, str]] = None,
+) -> httpx.Response:
+    try:
+        return await _client().put(path, json=json_body, headers=headers or {})
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"MCP upstream error: {e}") from e
+
+
 # ---------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------
@@ -309,6 +321,9 @@ async def nl(req: NlReq, request: Request, auto: bool = False) -> Dict[str, Any]
 
     out: Dict[str, Any] = {
         "matched": True,
+        # Explicit marker so the UI can show "regex" vs "llm" without
+        # inferring from the absence of a field.
+        "source": "regex",
         "text": req.text,
         "suggestion": suggestion,
     }
@@ -566,6 +581,43 @@ async def patch_settings(req: SettingsPatch) -> Dict[str, Any]:
     if update:
         settings_mod.update(update)
     return settings_mod.safe_view()
+
+
+# ---------------------------------------------------------------
+# Fabric intent file editor — proxies GET/PUT /fabric/intent on the MCP
+# server so the web client can maintain the intent without SSHing in.
+# ---------------------------------------------------------------
+
+@app.get("/api/fabric-intent")
+async def fabric_intent_get() -> Dict[str, Any]:
+    r = await _mcp_get("/fabric/intent")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"MCP /fabric/intent returned {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+class _FabricIntentPut(BaseModel):
+    content: Optional[Dict[str, Any]] = None
+    raw: Optional[str] = None
+
+
+@app.put("/api/fabric-intent")
+async def fabric_intent_put(req: _FabricIntentPut) -> Dict[str, Any]:
+    body: Dict[str, Any] = {}
+    if req.content is not None:
+        body["content"] = req.content
+    if req.raw is not None:
+        body["raw"] = req.raw
+    r = await _mcp_put("/fabric/intent", json_body=body)
+    # Surface the server's 400-validation errors to the client verbatim so
+    # the UI can show "invalid JSON at line 3" etc.
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail") or r.text
+        except Exception:
+            detail = r.text
+        raise HTTPException(status_code=r.status_code, detail=detail)
+    return r.json()
 
 
 # ---------------------------------------------------------------

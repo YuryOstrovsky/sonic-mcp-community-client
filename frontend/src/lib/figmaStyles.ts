@@ -13,61 +13,62 @@ import type { CSSProperties, MouseEvent } from "react";
 
 export const FG = {
   // ── Container / Surface ────────────────────────────────────────────
-  containerBg:      "#1e293b",     // slate-800
-  containerBorder:  "#334155",     // slate-700
-  containerRadius:  12,
-  containerShadow:  "0 20px 25px -5px rgba(0,0,0,0.3), 0 8px 10px -6px rgba(0,0,0,0.3)",
+  // Figma Core_UI dark navy scheme.
+  containerBg:      "#1a2332",                           // card (bg2)
+  containerBorder:  "rgba(255,255,255,0.08)",            // border
+  containerRadius:  10,
+  containerShadow:  "0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -4px rgba(0,0,0,0.3)",
 
   // ── Header ─────────────────────────────────────────────────────────
-  headerBorderBottom: "1px solid rgba(129,140,248,0.2)",  // indigo-400/20
+  headerBorderBottom: "1px solid rgba(255,255,255,0.08)",
 
   // ── Text Hierarchy ─────────────────────────────────────────────────
-  titleColor:    "#a5b4fc",   // indigo-300  – widget titles
-  headingColor:  "#e2e8f0",   // slate-200   – section headings
-  bodyColor:     "#e2e8f0",   // slate-200   – primary body text
-  subtitleColor: "#cbd5e1",   // slate-300   – emphasized inline text
-  mutedColor:    "#94a3b8",   // slate-400   – secondary / muted text
-  dimColor:      "#64748b",   // slate-500   – tertiary / disabled text
+  titleColor:    "#f3f4f6",   // gray-100  – widget titles
+  headingColor:  "#e5e7eb",   // gray-200  – section headings
+  bodyColor:     "#e5e7eb",   // gray-200  – primary body text
+  subtitleColor: "#d1d5db",   // gray-300  – emphasized inline text
+  mutedColor:    "#9ca3af",   // gray-400  – secondary / muted text
+  dimColor:      "#6b7280",   // gray-500  – tertiary / disabled text
 
-  // ── Buttons – Primary (Orange) ─────────────────────────────────────
-  btnPrimaryBg:       "#ea580c",   // orange-600
-  btnPrimaryHover:    "#c2410c",   // orange-700
-  btnPrimaryBorder:   "#f97316",   // orange-500
+  // ── Buttons – Primary (Orange, action verbs like Run/Save) ─────────
+  btnPrimaryBg:       "rgba(234,88,12,0.9)", // orange-600/90
+  btnPrimaryHover:    "#ea580c",             // orange-600
+  btnPrimaryBorder:   "rgba(249,115,22,0.6)",// orange-500/60
 
   // ── Buttons – Secondary (Outline) ──────────────────────────────────
-  btnSecondaryBorder: "#475569",   // slate-600
-  btnSecondaryColor:  "#cbd5e1",   // slate-300
-  btnSecondaryHover:  "#334155",   // slate-700
+  btnSecondaryBorder: "rgba(255,255,255,0.10)",
+  btnSecondaryColor:  "#d1d5db",
+  btnSecondaryHover:  "rgba(255,255,255,0.06)",
 
   // ── Buttons – Ghost / Close ────────────────────────────────────────
-  btnGhostHoverBg: "#334155",
+  btnGhostHoverBg: "rgba(255,255,255,0.06)",
 
   // ── Buttons – Disabled ─────────────────────────────────────────────
-  btnDisabledBg:     "#334155",
-  btnDisabledColor:  "#64748b",
-  btnDisabledBorder: "#475569",
+  btnDisabledBg:     "rgba(255,255,255,0.04)",
+  btnDisabledColor:  "#6b7280",
+  btnDisabledBorder: "rgba(255,255,255,0.08)",
 
   // ── Form Inputs ────────────────────────────────────────────────────
-  inputBg:     "var(--bg0)",
+  inputBg:     "var(--bg1)",
   inputBorder: "var(--border)",
   inputColor:  "var(--text)",
 
   // ── Checkbox ───────────────────────────────────────────────────────
-  checkboxSelectedBg:       "rgba(37,99,235,0.8)",   // blue-600/80
-  checkboxSelectedBorder:   "rgba(37,99,235,0.8)",
-  checkboxUnselectedBorder: "#64748b",
+  checkboxSelectedBg:       "rgba(59,130,246,0.9)",   // blue-500/90
+  checkboxSelectedBorder:   "rgba(59,130,246,0.9)",
+  checkboxUnselectedBorder: "rgba(255,255,255,0.2)",
 
   // ── Row / List Item ────────────────────────────────────────────────
-  rowSelectedBg:     "rgba(51,65,85,0.5)",
-  rowSelectedBorder: "#475569",
-  rowDefaultBorder:  "#334155",
-  rowHoverBorder:    "#475569",
-  rowHoverBg:        "rgba(51,65,85,0.3)",
+  rowSelectedBg:     "#1a2332",                   // bg2
+  rowSelectedBorder: "rgba(255,255,255,0.14)",
+  rowDefaultBorder:  "rgba(255,255,255,0.08)",
+  rowHoverBorder:    "rgba(255,255,255,0.14)",
+  rowHoverBg:        "rgba(26,35,50,0.5)",        // bg2/50
 
   // ── Warning / Info Banner ──────────────────────────────────────────
-  bannerBg:        "rgba(51,65,85,0.3)",
-  bannerBorder:    "rgba(71,85,105,0.5)",
-  bannerIconColor: "#94a3b8",
+  bannerBg:        "rgba(234,179,8,0.10)",
+  bannerBorder:    "rgba(234,179,8,0.20)",
+  bannerIconColor: "#eab308",
 
   // ── Semantic Status Colors ─────────────────────────────────────────
   errorRed:      "#ef4444",

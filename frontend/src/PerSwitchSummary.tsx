@@ -14,9 +14,10 @@
  */
 
 import {useEffect, useState} from "react";
+import {RefreshCw} from "lucide-react";
 import {FG} from "./lib/figmaStyles";
 import {displayName} from "./lib/state";
-import {Badge, Button, ErrorBanner, Loading, StatusPill} from "./shared";
+import {Badge, ErrorBanner, Loading, StatusPill} from "./shared";
 import {ApiError, invoke} from "./lib/api";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -55,7 +56,11 @@ type FanoutResult = {
 
 // ─── Component ──────────────────────────────────────────────────
 
-export function PerSwitchSummary(props: {selectedSwitch: string | null}) {
+export function PerSwitchSummary(props: {
+  selectedSwitch: string | null;
+  /** Bumping this value triggers a re-fetch. Wired from the header refresh. */
+  refreshKey?: number;
+}) {
   const [summaries, setSummaries] = useState<SwitchSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -81,10 +86,11 @@ export function PerSwitchSummary(props: {selectedSwitch: string | null}) {
     }
   }
 
+  // Refetch on mount AND whenever the header refresh bumps refreshKey.
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [props.refreshKey]);
 
   return (
     <section style={{
@@ -117,9 +123,14 @@ export function PerSwitchSummary(props: {selectedSwitch: string | null}) {
               {humanSince(lastFetched)}
             </span>
           )}
-          <Button onClick={fetchAll} disabled={loading}>
-            {loading ? <><span className="loading-spin" /> refreshing…</> : "↻ Refresh"}
-          </Button>
+          <button
+            onClick={fetchAll}
+            disabled={loading}
+            title="Re-fan-out system / interfaces / BGP / LLDP to every switch"
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 text-gray-300 transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </header>
 
@@ -408,13 +419,9 @@ function Metric(props: {
   label: string;
   value: string | number;
   sub?: string;
-  tone: "good" | "warn" | "bad" | "neutral";
+  tone: "good" | "warn" | "bad" | "neutral";  // retained for future use; colour no longer applied
 }) {
-  const color =
-    props.tone === "good"  ? FG.successGreen :
-    props.tone === "warn"  ? FG.warningYellow :
-    props.tone === "bad"   ? FG.errorRed :
-    FG.headingColor;
+  void props.tone;
   return (
     <div style={{
       background: FG.subtleBg,
@@ -434,7 +441,7 @@ function Metric(props: {
       <div style={{
         fontSize: 17,
         fontWeight: 700,
-        color,
+        color: FG.headingColor,
         fontFamily: "ui-monospace, monospace",
         whiteSpace: "nowrap",
       }}>{props.value}</div>

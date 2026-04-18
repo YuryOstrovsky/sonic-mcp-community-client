@@ -3,9 +3,17 @@
  * Used by per-tool widgets to stay visually consistent.
  */
 
-import {useMemo, useState, type CSSProperties, type ReactNode} from "react";
+import {useMemo, useRef, useState, type CSSProperties, type ReactNode} from "react";
+import {useVirtualizer} from "@tanstack/react-virtual";
 import {FG} from "../lib/figmaStyles";
 import {Badge} from "../shared";
+
+// Threshold above which Table switches from native <table> rendering to
+// a virtualized <div>-based list. Picked so 95% of real tool outputs
+// keep the semantic <table> (good for copy-paste, ARIA) and only the
+// genuinely big payloads pay the list-virtualization cost.
+const VIRTUALIZE_ABOVE = 200;
+const ROW_HEIGHT = 32;  // matches the padding+line-height of the native row
 
 // ─── Column + Table ──────────────────────────────────────────────
 export type Column<T> = {
@@ -36,6 +44,7 @@ export function Table<T>(props: {
   }, [rows, filter, filterText]);
 
   const showFilter = !!filterText;
+  const virtualize = filtered.length > VIRTUALIZE_ABOVE;
 
   return (
     <div>
@@ -59,9 +68,19 @@ export function Table<T>(props: {
           />
           <span style={{fontSize: 11, color: FG.mutedColor}}>
             {filtered.length}/{rows.length} rows
+            {virtualize && <span style={{marginLeft: 6, color: FG.dimColor}}>(virtualized)</span>}
           </span>
         </div>
       )}
+
+      {virtualize ? (
+        <VirtualTable
+          columns={columns}
+          rows={filtered}
+          getKey={getKey}
+          maxHeight={maxHeight}
+        />
+      ) : (
 
       <div style={{
         overflow: "auto",
@@ -130,6 +149,108 @@ export function Table<T>(props: {
           </tbody>
         </table>
       </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Virtualized table body ──────────────────────────────────────
+//
+// Used automatically by Table when row count exceeds VIRTUALIZE_ABOVE.
+// Uses @tanstack/react-virtual so only the rows visible in the scroll
+// viewport pay their render cost. Row cells are absolutely positioned
+// within a fixed-height track.
+function VirtualTable<T>(props: {
+  columns: Column<T>[];
+  rows: T[];
+  getKey?: (row: T, i: number) => string | number;
+  maxHeight: number | string;
+}) {
+  const {columns, rows, getKey, maxHeight} = props;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+
+  // Flex basis per column — derived from `width` if specified, else equal share.
+  const flexFor = (c: Column<T>) => c.width ? {flex: `0 0 ${c.width}`} : {flex: 1, minWidth: 0};
+
+  return (
+    <div
+      ref={parentRef}
+      style={{
+        maxHeight,
+        overflow: "auto",
+        border: `1px solid ${FG.divider}`,
+        borderRadius: 8,
+        fontSize: 12.5,
+        color: FG.bodyColor,
+      }}
+    >
+      {/* Sticky header */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 1,
+        display: "flex", background: FG.containerBg,
+        borderBottom: `1px solid ${FG.containerBorder}`,
+      }}>
+        {columns.map((c) => (
+          <div
+            key={c.key}
+            style={{
+              ...flexFor(c),
+              padding: "8px 10px",
+              textAlign: c.align ?? "left",
+              color: FG.mutedColor,
+              fontWeight: 600,
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >{c.label}</div>
+        ))}
+      </div>
+
+      <div style={{height: virtualizer.getTotalSize(), position: "relative"}}>
+        {virtualizer.getVirtualItems().map((item) => {
+          const row = rows[item.index];
+          const zebra = item.index % 2 === 0 ? FG.subtleBg : "transparent";
+          return (
+            <div
+              key={getKey ? getKey(row, item.index) : item.index}
+              style={{
+                position: "absolute", top: 0, left: 0, right: 0,
+                height: item.size,
+                transform: `translateY(${item.start}px)`,
+                display: "flex",
+                background: zebra,
+                borderBottom: `1px solid ${FG.divider}`,
+              }}
+            >
+              {columns.map((c) => {
+                const v = c.render ? c.render(row) : (row as any)[c.key];
+                return (
+                  <div key={c.key} style={{
+                    ...flexFor(c),
+                    padding: "6px 10px",
+                    textAlign: c.align ?? "left",
+                    fontFamily: c.mono ? "ui-monospace, SFMono-Regular, monospace" : undefined,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {v ?? <span style={{color: FG.dimColor}}>—</span>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -172,13 +293,11 @@ export function KvGrid(props: {
 export function SummaryStrip(props: {
   items: Array<{label: string; value: ReactNode; tone?: "good" | "warn" | "bad" | "info" | "neutral"; sub?: ReactNode}>;
 }) {
-  const tones: Record<string, string> = {
-    good: FG.successGreen,
-    warn: FG.warningYellow,
-    bad: FG.errorRed,
-    info: FG.infoBlue,
-    neutral: FG.headingColor,
-  };
+  // Values render neutral — the label already tells the reader what the
+  // number means, and colouring every cell made the UI feel overloaded.
+  // Semantic signal moves to the label/sub (e.g. "1 failed") or a badge
+  // next to it when actually needed.
+  void (FG.successGreen, FG.warningYellow, FG.errorRed, FG.infoBlue);
   return (
     <div style={{
       display: "flex",
@@ -210,7 +329,7 @@ export function SummaryStrip(props: {
           <div style={{
             fontSize: 20,
             fontWeight: 600,
-            color: tones[it.tone ?? "neutral"],
+            color: FG.headingColor,
             marginTop: 2,
             whiteSpace: "nowrap",
             overflow: "hidden",

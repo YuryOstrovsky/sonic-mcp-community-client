@@ -1,0 +1,47 @@
+# Git + dev metadata — runtime needs none of it
+.git/
+.gitignore
+.github/
+
+# Never bake secrets or user state into the image
+backend/.env
+backend/.env.*
+backend/settings.json
+backend/__pycache__/
+backend/.venv/
+backend/venv/
+
+# Node + Vite caches — the multi-stage build's frontend-build stage
+# runs `npm ci` from a clean lockfile so local node_modules is useless.
+frontend/node_modules/
+frontend/dist/          # rebuilt in the image
+frontend/.vite/
+frontend/*.log
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Repo-level markdown — not shipped in the image
+README.md
+README.docker.md
+CONTRIBUTING.md
+CHANGELOG.md
+LICENSE
+
+# Claude / assistant state
+.claude/
+CLAUDE.md
+
+# Old code quarantined from the XCO lineage
+_legacy/
+FIGMA/

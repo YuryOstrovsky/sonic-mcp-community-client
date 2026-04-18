@@ -5,9 +5,7 @@
  * Selection persists in localStorage.
  */
 
-import {FG} from "./lib/figmaStyles";
 import {displayName} from "./lib/state";
-import {StatusPill} from "./shared";
 
 type DeviceStatus = {restconf?: boolean; ssh?: boolean};
 type ReadyShape = {
@@ -28,23 +26,12 @@ export function SwitchPicker(props: {
   const ips = Object.keys(devices);
 
   return (
-    <div style={{display: "flex", alignItems: "center", gap: 10}}>
-      <label style={{fontSize: 11, color: FG.mutedColor, textTransform: "uppercase", letterSpacing: 1.1}}>
-        Target switch
-      </label>
+    <div className="flex items-center gap-2.5">
+      <span className="text-xs text-gray-400">Target switch</span>
       <select
         value={props.selected ?? ""}
         onChange={(e) => props.onChange(e.target.value || null)}
-        style={{
-          background: FG.inputBg,
-          color: FG.inputColor,
-          border: `1px solid ${FG.inputBorder}`,
-          borderRadius: 8,
-          padding: "6px 10px",
-          fontSize: 13,
-          minWidth: 180,
-          cursor: "pointer",
-        }}
+        className="h-8 cursor-pointer rounded-md border border-white/10 bg-[#0d1220] px-3 text-sm text-gray-200 hover:border-white/20 focus:outline-none focus:ring-1 focus:ring-white/20"
       >
         <option value="">— none —</option>
         {ips.map((ip) => (
@@ -53,17 +40,6 @@ export function SwitchPicker(props: {
           </option>
         ))}
       </select>
-
-      {props.selected && devices[props.selected] && (
-        <>
-          <StatusPill tone={devices[props.selected].restconf ? "good" : "bad"}>
-            RESTCONF
-          </StatusPill>
-          <StatusPill tone={devices[props.selected].ssh ? "good" : "bad"}>
-            SSH
-          </StatusPill>
-        </>
-      )}
     </div>
   );
 }

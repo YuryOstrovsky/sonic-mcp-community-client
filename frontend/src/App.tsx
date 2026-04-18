@@ -1,17 +1,20 @@
 /**
- * Application shell: header with switch picker, left sidebar, main view area.
+ * Application shell: left sidebar + top header + view area.
  *
- * Views are plain components — no router dep. View state lives here and
- * is passed down. /api/ready + /api/tools + /api/health are fetched once
- * on mount and shared across views.
+ * Views are plain components — no router. /api/ready + /api/tools + /api/health
+ * are fetched once on mount and passed down.
  */
 
 import {useEffect, useState} from "react";
-import {FG} from "./lib/figmaStyles";
+import {RefreshCw} from "lucide-react";
+import {Toaster} from "sonner";
 import {displayName, loadSelectedSwitch, saveSelectedSwitch} from "./lib/state";
 import {Sidebar, type ViewId} from "./Sidebar";
 import {SwitchPicker} from "./SwitchPicker";
+import {CommandPalette} from "./CommandPalette";
 import {Dashboard} from "./Dashboard";
+import {FabricView} from "./FabricView";
+import {HealthBadge} from "./HealthBadge";
 import {ConsoleView} from "./ConsoleView";
 import {ToolsView} from "./ToolsView";
 import {SettingsView} from "./SettingsView";
@@ -28,8 +31,11 @@ export default function App() {
   const [health, setHealth] = useState<any>(null);
   const [tools, setTools] = useState<ToolSpec[] | null>(null);
   const [bootErr, setBootErr] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  // Bumped on every header-refresh click. Views that own their own async
+  // data (e.g. PerSwitchSummary's 4 fanouts) watch this to re-fetch.
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Initial fetch
   useEffect(() => {
     (async () => {
       try {
@@ -37,7 +43,6 @@ export default function App() {
         setHealth(h);
         setReady(r);
         setTools(t);
-        // If nothing saved yet, default to the first reachable device.
         if (!selectedSwitch) {
           const devices: Record<string, any> = r?.body?.checks?.devices ?? {};
           const firstReachable = Object.entries(devices).find(([_ip, s]: any) => s?.restconf || s?.ssh)?.[0] as string | undefined;
@@ -53,92 +58,99 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Global "open the Fabric view" event — dispatched by FabricTopologyWidget.
+  useEffect(() => {
+    const handler = () => setView("fabric");
+    window.addEventListener("sonic-mcp:open-fabric", handler);
+    return () => window.removeEventListener("sonic-mcp:open-fabric", handler);
+  }, []);
+
+  // Generic "open <view-id>" event — used by the error card's "activity"
+  // button and potentially any future deep-link.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (typeof id === "string") setView(id as ViewId);
+    };
+    window.addEventListener("sonic-mcp:open-view", handler);
+    return () => window.removeEventListener("sonic-mcp:open-view", handler);
+  }, []);
+
   function onSwitchChange(ip: string | null) {
     setSelectedSwitch(ip);
     saveSelectedSwitch(ip);
   }
 
   async function refreshReady() {
+    setRefreshing(true);
+    // Tell views that own their own async data to re-fetch too.
+    setRefreshKey((n) => n + 1);
     try {
-      const r = await getReady();
+      // Re-pull everything the shell exposes — not just /ready — so the
+      // Tools count, LLM pill, and upstream version line all stay in sync.
+      const [h, r, t] = await Promise.all([getHealth(), getReady(), getTools()]);
+      setHealth(h);
       setReady(r);
-    } catch { /* swallow; error already visible on dashboard */ }
+      setTools(t);
+    } catch {/* swallow */}
+    finally {
+      // Keep the spin visible for at least ~400 ms so fast refreshes still
+      // register as a visible click.
+      setTimeout(() => setRefreshing(false), 400);
+    }
   }
 
   return (
-    <div style={{
-      display: "flex",
-      minHeight: "100vh",
-      background: "var(--bg0)",
-      color: FG.bodyColor,
-      fontFamily: 'Source Sans Pro, system-ui, sans-serif',
-    }}>
+    <div className="flex h-screen bg-[#0a0e1a] text-gray-200">
+      <Toaster
+        position="bottom-right"
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: "#1a2332",
+            border: "1px solid rgba(255,255,255,0.10)",
+            color: "#e5e7eb",
+          },
+        }}
+      />
+      <CommandPalette
+        tools={tools}
+        devices={Object.keys(ready?.body?.checks?.devices ?? {})}
+        selectedSwitch={selectedSwitch}
+        onOpenView={setView}
+        onSelectSwitch={onSwitchChange}
+      />
       <Sidebar current={view} onChange={setView} />
 
-      <main style={{
-        flex: 1,
-        minWidth: 0,
-        // CRITICAL: clip anything that tries to escape the visible area to the right.
-        // Without this, wide table widgets / long flex rows push content past the
-        // viewport edge, because min-width: 0 on the flex item alone doesn't force
-        // descendants to honour the cap.
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-      }}>
-        {/* Top bar */}
-        <header style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "14px 24px",
-          borderBottom: FG.headerBorderBottom,
-          background: FG.containerBg,
-          flexShrink: 0,
-        }}>
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-white/[0.06] bg-[#0d1220] px-6 py-4">
           <div>
-            <div style={{
-              fontSize: 16,
-              fontWeight: 600,
-              color: FG.titleColor,
-              letterSpacing: 0.3,
-            }}>
+            <h1 className="text-xl font-semibold text-gray-100">
               SONiC MCP Community Client
-            </div>
-            <div style={{fontSize: 11, color: FG.mutedColor}}>
+            </h1>
+            <p className="mt-0.5 text-xs text-gray-400">
               {health?.upstream?.base_url ? `upstream: ${health.upstream.base_url}` : "booting…"}
               {selectedSwitch && ` · target: ${displayName(selectedSwitch)} (${selectedSwitch})`}
-            </div>
+            </p>
           </div>
-          <div style={{display: "flex", alignItems: "center", gap: 12}}>
+          <div className="flex items-center gap-3">
             <LlmStatus onOpenSettings={() => setView("settings")} />
+            <HealthBadge onTick={refreshReady} />
             <button
               onClick={refreshReady}
-              title="Re-probe /ready"
-              style={{
-                background: "transparent",
-                border: `1px solid ${FG.btnSecondaryBorder}`,
-                color: FG.btnSecondaryColor,
-                borderRadius: 8,
-                padding: "6px 10px",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >↻ refresh</button>
+              disabled={refreshing}
+              title="Re-fetch /ready, /health, and the tool catalog"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-white/10 text-gray-300 transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            </button>
             <SwitchPicker ready={ready} selected={selectedSwitch} onChange={onSwitchChange} />
           </div>
         </header>
 
-        {/* Content */}
-        <div style={{
-          flex: 1,
-          padding: 24,
-          minWidth: 0,
-          minHeight: 0,
-          overflow: "auto",
-        }}>
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto p-6">
           {bootErr && (
-            <div style={{marginBottom: 16}}>
+            <div className="mb-4">
               <ErrorBanner>
                 Boot error: {bootErr}. The backend may not be running or MCP_BASE_URL is
                 unreachable. See backend logs.
@@ -147,32 +159,17 @@ export default function App() {
           )}
 
           {view === "dashboard" && (
-            <Dashboard
-              ready={ready}
-              health={health}
-              tools={tools}
-              selectedSwitch={selectedSwitch}
-            />
+            <Dashboard ready={ready} health={health} tools={tools} selectedSwitch={selectedSwitch} refreshKey={refreshKey} />
           )}
-
+          {view === "fabric" && <FabricView refreshKey={refreshKey} />}
           {view === "console" && (
             <ConsoleView selectedSwitch={selectedSwitch} tools={tools} />
           )}
-
           {view === "tools" && (
-            <ToolsView
-              tools={tools}
-              selectedSwitch={selectedSwitch}
-            />
+            <ToolsView tools={tools} selectedSwitch={selectedSwitch} />
           )}
-
-          {view === "activity" && (
-            <ActivityView />
-          )}
-
-          {view === "settings" && (
-            <SettingsView />
-          )}
+          {view === "activity" && <ActivityView />}
+          {view === "settings" && <SettingsView />}
         </div>
       </main>
     </div>
