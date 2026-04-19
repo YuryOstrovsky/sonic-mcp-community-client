@@ -40,7 +40,8 @@ cd ../frontend && npm run dev         # http://<host>:5173
 ```
 backend/
   main.py          FastAPI routes: /api/health /api/tools /api/invoke
-                   /api/nl /api/settings /api/fabric-intent …
+                   /api/nl /api/settings /api/fabric-intent
+                   /api/inventory* …
   nl_router.py     Regex-based text → {tool, inputs} routing
   llm.py           OpenAI + Ollama backends for the NL fallback path
   .env.example     Runtime configuration template

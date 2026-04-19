@@ -106,7 +106,7 @@ Six views, all on one port:
 | **AI Console** | Regex-first NL router, optional LLM fallback, persistent chat history, widget-rich results |
 | **Tools** | Auto-generated forms from each tool's JSON Schema |
 | **Activity** | Mutation ledger with search, filters, and one-click rollback row actions |
-| **Settings** | LLM provider picker + live fabric-intent editor (Load / Validate / Save) |
+| **Settings** | LLM provider picker, live fabric-intent editor, and a **Fabric Inventory** section (add / remove / probe switches, LLDP seed-walk discovery with bulk-add on approval) |
 
 Plus cross-cutting niceties:
 

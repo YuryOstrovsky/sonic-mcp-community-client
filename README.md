@@ -28,7 +28,7 @@ compatible MCP endpoint on a trusted network.
 | **AI Console** | Chat-style NL interface. Regex router maps free text to a tool + inputs; off-script queries fall through to an LLM (OpenAI or Ollama, configured in Settings). Results render as rich per-tool widgets. History persists across reloads (last 50 turns; has a **Clear** button). |
 | **Tools** | Full catalog with search, auto-generated forms from each tool's JSON Schema, policy risk pills, live result in the matching widget. |
 | **Activity** | Server-side mutation ledger: timestamp, tool, switch, status, pre/post state. Search, filter by status/tool/switch, row actions (rollback supported mutations with one click). |
-| **Settings** | Active LLM provider (Auto / OpenAI / Ollama), API keys, model picker, **live fabric-intent editor** with Save / Validate / Reload. |
+| **Settings** | Active LLM provider (Auto / OpenAI / Ollama), API keys, model picker, **live fabric-intent editor** with Save / Validate / Reload, and a **Fabric Inventory** section (add / remove / probe switches, LLDP seed-walk discovery with an approval dialog). |
 
 **Cross-cutting features**
 
@@ -40,6 +40,7 @@ compatible MCP endpoint on a trusted network.
 - **Toast notifications** for mutation success/failure, copies, downloads.
 - **Virtualized tables** when a widget lands >200 rows (LLDP / ARP on a large fabric).
 - **Auto-refresh** (off / 30s / 60s / 120s) — polls `get_fabric_health` in the background and flips the header dot red on drift.
+- **Fabric inventory** — manage which switches the MCP server can reach directly from the UI. Add / remove / probe entries, override per-device credentials, or run an LLDP seed-walk (`discover_fabric_from_seed`) to propose neighbors for bulk-add after an approval review.
 
 ---
 
