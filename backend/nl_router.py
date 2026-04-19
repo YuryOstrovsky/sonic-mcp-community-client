@@ -279,6 +279,18 @@ _PATTERNS: List[Tuple[str, List[re.Pattern]]] = [
             re.compile(r"\brecent\s+(mutations|changes)\b", re.I),
         ],
     ),
+    # discover_fabric_from_seed must come BEFORE get_fabric_topology so
+    # "discover fabric from vm1" doesn't get eaten by the generic
+    # "fabric" reads.
+    (
+        "discover_fabric_from_seed",
+        [
+            re.compile(r"\bdiscover\b.*\bfabric\b", re.I),
+            re.compile(r"\bdiscover\b.*\b(neighbors?|switches)\b", re.I),
+            re.compile(r"\blldp\s+walk\b", re.I),
+            re.compile(r"\bseed\s+discovery\b", re.I),
+        ],
+    ),
     # Fabric-level reads must match BEFORE get_lldp_neighbors (whose bare
     # `\b(topology|neighbors?)\b` would otherwise swallow "fabric topology").
     (
@@ -1010,6 +1022,20 @@ def route(text: str) -> Optional[RoutedIntent]:
         if tool in ("fabric_drain_rotate", "detect_routing_loop",
                     "get_arp_table_all", "get_mac_table_all"):
             inputs.pop("switch_ip", None)
+
+        # discover_fabric_from_seed: the "on X"/"from X" switch becomes
+        # the seed. Fall back to the generic switch_ip the router already
+        # extracted (e.g. the globally-selected switch).
+        if tool == "discover_fabric_from_seed":
+            if switch_ip:
+                inputs["seed_switch_ip"] = switch_ip
+            inputs.pop("switch_ip", None)
+            # Optional "depth N" / "N hops"
+            hops_m = re.search(r"\b(\d+)\s*hops?\b|\bdepth\s+(\d+)\b", raw, re.I)
+            if hops_m:
+                n = int(hops_m.group(1) or hops_m.group(2))
+                if 1 <= n <= 5:
+                    inputs["max_hops"] = n
 
         # get_fabric_config_diff: pick two switch aliases in order of
         # appearance. "diff config of vm1 and vm2" → left=vm1 right=vm2.

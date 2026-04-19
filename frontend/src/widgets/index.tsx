@@ -14,6 +14,7 @@ import {Badge, JsonView, StatusPill} from "../shared";
 import {ActivityWidget} from "./ActivityWidget";
 import {ArpTableWidget} from "./ArpTableWidget";
 import {BgpSummaryWidget} from "./BgpSummaryWidget";
+import {DiscoverFabricWidget} from "./DiscoverFabricWidget";
 import {DrainRotateWidget} from "./DrainRotateWidget";
 import {FabricBandwidthWidget} from "./FabricBandwidthWidget";
 import {FabricConfigDiffWidget} from "./FabricConfigDiffWidget";
@@ -83,6 +84,7 @@ const REGISTRY: Record<string, WidgetRender> = {
   restore_fabric_snapshot:        (p) => <SnapshotWidget           payload={p.payload} mode="restore" />,
   compare_fabric_snapshots:       (p) => <SnapshotCompareWidget    payload={p.payload} />,
   fabric_drain_rotate:            (p) => <DrainRotateWidget        payload={p.payload} />,
+  discover_fabric_from_seed:      (p) => <DiscoverFabricWidget     payload={p.payload} />,
   detect_routing_loop:            (p) => <RoutingLoopWidget        payload={p.payload} />,
   get_mac_table:                  (p) => <MacTableWidget           payload={p.payload} />,
   get_mac_table_all:              (p) => <MultiDeviceWidget        tool={p.tool} payload={p.payload} />,

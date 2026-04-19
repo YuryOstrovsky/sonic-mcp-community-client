@@ -52,6 +52,7 @@ const PALETTE_PROMPTS: Record<string, PromptFn> = {
   get_mac_table_all:       () => "mac table on all switches",
   get_fabric_topology:     () => "fabric topology",
   get_fabric_health:       () => "fabric health",
+  discover_fabric_from_seed: (s) => `discover fabric from ${s}`,
   get_fabric_reachability_matrix: () => "reachability matrix",
   get_fabric_mtu_consistency:     () => "mtu consistency",
   get_fabric_bandwidth:           () => "fabric bandwidth",

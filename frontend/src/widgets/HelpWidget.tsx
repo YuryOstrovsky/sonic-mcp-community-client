@@ -73,6 +73,7 @@ const TOOL_TO_QUERY: Record<string, (switchAlias: string) => string | null> = {
   // Fabric reads (no switch_ip needed — they span the inventory)
   get_fabric_topology:        () => "fabric topology",
   get_fabric_health:          () => "fabric health",
+  discover_fabric_from_seed:  (s) => `discover fabric from ${s}`,
   get_fabric_reachability_matrix: () => "reachability matrix",
   get_fabric_mtu_consistency:     () => "mtu consistency",
   get_fabric_bandwidth:           () => "fabric bandwidth",

@@ -175,10 +175,13 @@ export function ConsoleView(props: {
       tool === "ping_between" ||
       tool === "traceroute_between" ||
       tool === "iperf_between";
+    // discover_fabric_from_seed uses seed_switch_ip (parallel to source_switch_ip).
+    const usesSeedSwitch = tool === "discover_fabric_from_seed";
     const usesLeftRight = tool === "get_fabric_config_diff";
     const hasSwitchId =
       !!inputs.switch_ip ||
       (usesSourceSwitch && !!inputs.source_switch_ip) ||
+      (usesSeedSwitch && !!inputs.seed_switch_ip) ||
       (usesLeftRight && !!inputs.left_switch_ip && !!inputs.right_switch_ip);
     const needsSwitch = !isFanout && !isHelp && !INVENTORY_WIDE.has(tool);
     if (needsSwitch && !hasSwitchId) {
