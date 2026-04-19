@@ -9,6 +9,34 @@ port.
 
 ---
 
+## 📂 Before you pull — host directory
+
+The image runs as non-root user `mcpc` (**uid 1000**). If a bind-mount
+source doesn't exist when the container starts, Docker creates it as
+`root` and the container user can't write to it. Symptom: the Settings
+view saves silently fail — the OpenAI key and LLM provider choice
+disappear on the next restart. Pre-create the dir so it lands with
+sensible ownership:
+
+```bash
+mkdir -p data
+
+# Most dev machines already have uid 1000 as the first user — check:
+id -u                # if this prints 1000, you're done
+
+# If your uid is different, align ownership with the container user:
+sudo chown -R 1000:1000 data
+```
+
+| Host dir  | What lives there                                             |
+|-----------|--------------------------------------------------------------|
+| `./data/` | `settings.json` — active LLM provider + optional OpenAI key  |
+
+Nothing switch-facing is stored here; switch credentials live on the
+MCP server side.
+
+---
+
 ## 🚀 Quick start
 
 ```bash
