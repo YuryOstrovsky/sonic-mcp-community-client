@@ -98,7 +98,33 @@ export function Dashboard(props: {
         {props.ready === null ? (
           <Loading />
         ) : deviceIps.length === 0 ? (
-          <EmptyState>No devices in inventory.</EmptyState>
+          <EmptyState>
+            <div style={{display: "flex", flexDirection: "column", alignItems: "center", gap: 10}}>
+              <div>No devices in inventory yet.</div>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(
+                  new CustomEvent("sonic-mcp:open-view", {detail: "settings"}),
+                )}
+                style={{
+                  padding: "6px 14px",
+                  border: `1px solid ${FG.btnPrimaryBorder}`,
+                  background: FG.btnPrimaryBg,
+                  color: "#0b1220",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Add your first switch →
+              </button>
+              <div style={{fontSize: 11, color: FG.dimColor}}>
+                Settings → Fabric Inventory lets you add switches by
+                IP or walk a seed with LLDP discovery.
+              </div>
+            </div>
+          </EmptyState>
         ) : (
           <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12}}>
             {deviceIps.map((ip) => (

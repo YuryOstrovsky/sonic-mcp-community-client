@@ -45,7 +45,7 @@ export default function App() {
         setTools(t);
         if (!selectedSwitch) {
           const devices: Record<string, any> = r?.body?.checks?.devices ?? {};
-          const firstReachable = Object.entries(devices).find(([_ip, s]: any) => s?.restconf || s?.ssh)?.[0] as string | undefined;
+          const firstReachable = Object.entries(devices).find(([, s]: [string, any]) => s?.restconf || s?.ssh)?.[0] as string | undefined;
           if (firstReachable) {
             setSelectedSwitch(firstReachable);
             saveSelectedSwitch(firstReachable);

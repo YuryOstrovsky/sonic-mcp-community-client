@@ -13,5 +13,18 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Split heavy, infrequently-touched libs off the main bundle so the
+    // initial page load isn't dragging ~700 kB through on first paint.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          reactflow: ["reactflow"],
+          icons:   ["lucide-react"],
+          misc:    ["cmdk", "sonner", "@tanstack/react-virtual"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 800,
+  },
 });
-

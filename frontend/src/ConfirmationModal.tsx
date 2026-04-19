@@ -50,7 +50,14 @@ export function ConfirmationModal(props: {
     };
   }, [onCancel, busy]);
 
-  const switchIp = edited.switch_ip as string | undefined;
+  // Collect every "target switch" field present on the inputs, so the
+  // top panel shows them with resolved names. switch_ip is treated as
+  // the canonical global target (editable only via the top-bar picker);
+  // sibling *_switch_ip fields (seed_switch_ip, source_switch_ip,
+  // left/right_switch_ip, src/dst_switch_ip, etc.) stay editable below.
+  const targetSwitchEntries: {key: string; ip: string}[] = Object.entries(edited)
+    .filter(([k, v]) => /(?:^|_)switch_ip$/.test(k) && typeof v === "string" && v)
+    .map(([key, ip]) => ({key, ip: ip as string}));
   // Fields to render as editable rows = everything in the input schema
   // EXCEPT switch_ip (that's set elsewhere via the top-bar picker).
   const schema = tool.input_schema ?? {type: "object", properties: {}};
@@ -181,18 +188,9 @@ export function ConfirmationModal(props: {
               <Badge>{tool.category}</Badge>
               <Badge>{tool.transport}</Badge>
             </span>
-            {switchIp && (
-              <>
-                <FieldLabel>Target switch</FieldLabel>
-                <div>
-                  <strong style={{color: FG.titleColor}}>{displayName(switchIp)}</strong>
-                  <code style={{color: FG.mutedColor, fontSize: 12, marginLeft: 8}}>{switchIp}</code>
-                  <span style={{marginLeft: 8, fontSize: 10, color: FG.dimColor, textTransform: "uppercase", letterSpacing: 1}}>
-                    (change in top-bar picker)
-                  </span>
-                </div>
-              </>
-            )}
+            {targetSwitchEntries.map(({key, ip}) => (
+              <TargetSwitchRow key={key} fieldKey={key} ip={ip} />
+            ))}
           </div>
 
           {fieldOrder.length > 0 && (
@@ -440,6 +438,27 @@ function inputStyle(hasError: boolean): React.CSSProperties {
     width: "100%",
     boxSizing: "border-box",
   };
+}
+
+function TargetSwitchRow({fieldKey, ip}: {fieldKey: string; ip: string}) {
+  const isCanonical = fieldKey === "switch_ip";
+  const label = isCanonical
+    ? "Target switch"
+    : fieldKey.replace(/_switch_ip$/, "").replace(/_/g, " ") + " switch";
+  return (
+    <>
+      <FieldLabel>{label}</FieldLabel>
+      <div>
+        <strong style={{color: FG.titleColor}}>{displayName(ip)}</strong>
+        <code style={{color: FG.mutedColor, fontSize: 12, marginLeft: 8}}>{ip}</code>
+        {isCanonical && (
+          <span style={{marginLeft: 8, fontSize: 10, color: FG.dimColor, textTransform: "uppercase", letterSpacing: 1}}>
+            (change in top-bar picker)
+          </span>
+        )}
+      </div>
+    </>
+  );
 }
 
 function FieldLabel({children}: {children: React.ReactNode}) {

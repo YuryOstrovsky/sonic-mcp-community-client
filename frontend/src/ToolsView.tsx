@@ -63,7 +63,13 @@ export function ToolsView(props: {
     const props_ = selectedTool.input_schema?.properties ?? {};
     for (const [k, def] of Object.entries(props_)) {
       const d = def as any;
-      if (k === "switch_ip" && props.selectedSwitch) { init[k] = props.selectedSwitch; continue; }
+      // Pre-fill any "*_switch_ip" field (switch_ip, seed_switch_ip,
+      // source_switch_ip, left/right/src/dst_switch_ip, …) from the
+      // globally-selected switch. Users still edit them freely.
+      if (/(?:^|_)switch_ip$/.test(k) && props.selectedSwitch) {
+        init[k] = props.selectedSwitch;
+        continue;
+      }
       if (d?.default !== undefined) { init[k] = d.default; continue; }
       if (d?.type === "boolean") { init[k] = false; continue; }
       init[k] = "";
@@ -71,6 +77,9 @@ export function ToolsView(props: {
     setInputs(init);
     setResult(null);
     setErr(null);
+    // We intentionally key the reset on tool identity + selectedSwitch,
+    // not the whole selectedTool object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTool?.name, props.selectedSwitch]);
 
   function cleanInputs(): Record<string, any> {

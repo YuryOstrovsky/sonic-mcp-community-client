@@ -16,6 +16,10 @@ import {Badge, ErrorBanner, JsonView, StatusPill} from "../shared";
 import {KvGrid, Section} from "./common";
 
 export function MutationResultWidget({payload}: {payload: any}) {
+  // Hooks first — React's rules of hooks forbid a conditional call, so
+  // even the stdio toggle lives before the early error-return branch.
+  const [showStdio, setShowStdio] = useState(false);
+
   // ── Error path: server rejected (policy violation, missing inputs, etc.) ──
   // The backend shapes failed /invoke responses as {error, detail} — so if
   // we see that and no summary, render the error prominently instead of
@@ -63,7 +67,6 @@ export function MutationResultWidget({payload}: {payload: any}) {
   const mutationId: string | undefined = payload?.mutation_id;
   const stdout: string = payload?.stdout ?? "";
   const stderr: string = payload?.stderr ?? "";
-  const [showStdio, setShowStdio] = useState(false);
 
   // Build a diff of pre vs post state, highlighting changed fields.
   const diffRows = buildDiffRows(pre, post);

@@ -1118,5 +1118,6 @@ EXAMPLES: List[str] = [
     "remove vlan 250 on vm1",
     "save config on vm1",
     "show mutation history",
+    "discover fabric from vm1",
     "help",
 ]

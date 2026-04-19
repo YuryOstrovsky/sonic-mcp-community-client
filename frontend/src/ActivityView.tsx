@@ -39,7 +39,12 @@ export function ActivityView() {
     }
   }
 
-  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [limit]);
+  useEffect(() => {
+    refresh();
+    // refresh is a stable fetch closure — deliberately excluded to avoid
+    // re-running on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [limit]);
 
   // Unique lists for the tool + switch dropdowns — drawn from the
   // currently loaded entries, not the full catalog, so the menus only

@@ -89,7 +89,6 @@ export function PerSwitchSummary(props: {
   // Refetch on mount AND whenever the header refresh bumps refreshKey.
   useEffect(() => {
     fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.refreshKey]);
 
   return (

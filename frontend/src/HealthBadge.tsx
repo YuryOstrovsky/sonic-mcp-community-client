@@ -36,7 +36,12 @@ export function HealthBadge(props: {onTick: () => void}) {
   });
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const onTickRef = useRef(props.onTick);
-  onTickRef.current = props.onTick;
+
+  // Keep the ref in sync with the latest callback without assigning
+  // during render (which trips React's concurrent-mode invariants).
+  useEffect(() => {
+    onTickRef.current = props.onTick;
+  }, [props.onTick]);
 
   // Persist selection across reloads.
   useEffect(() => {
@@ -48,10 +53,7 @@ export function HealthBadge(props: {onTick: () => void}) {
   // tick does TWO things: bump the global refreshKey via onTick, and
   // fetch `get_fabric_health` for the badge color.
   useEffect(() => {
-    if (interval === "off") {
-      setHealth(null);
-      return;
-    }
+    if (interval === "off") return;
     const ms = Number(interval) * 1000;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +81,10 @@ export function HealthBadge(props: {onTick: () => void}) {
     };
   }, [interval]);
 
-  const s = health?.summary ?? {};
+  // When auto-refresh is off, ignore any stale payload — prevents the
+  // badge from showing a cached "healthy" after the user disabled polling.
+  const effectiveHealth = interval === "off" ? null : health;
+  const s = effectiveHealth?.summary ?? {};
   const broken = (s.broken ?? 0) + (s.unreachable ?? 0);
   const orphan = s.orphan ?? 0;
   const tone: "good" | "warn" | "bad" | "off" =
