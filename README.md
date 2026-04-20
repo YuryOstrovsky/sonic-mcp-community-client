@@ -194,9 +194,9 @@ CI (GitHub Actions) lint + build + docker image build on every PR.
 
 ---
 
-## Few screenshots of this product
+## Few screenshots of MCP client
 
-## Few Screenshots of the MCP client working with this MCP server 
+
 
 <img width="1712" height="865" alt="image" src="https://github.com/user-attachments/assets/418053fd-21d6-41ea-8e23-5b1f7df1fe9e" />
 
