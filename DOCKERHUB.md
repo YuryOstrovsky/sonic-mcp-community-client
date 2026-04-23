@@ -52,9 +52,35 @@ docker run -d --name sonic-mcp-client \
 # then open:  http://<host>:5174/
 ```
 
-`MCP_BASE_URL` is the only required setting. If your MCP server runs
-on the same host outside Docker, use
-`-e MCP_BASE_URL=http://host.docker.internal:8000`.
+`MCP_BASE_URL` is the only required setting.
+
+---
+
+## ⚠ Common pitfall: `localhost` has two meanings in Docker
+
+The most frequent setup failure is `MCP_BASE_URL=http://localhost:8000`
+or `http://127.0.0.1:8000`. Inside the container, `localhost` is the
+**container's own loopback** — not your host. The MCP server isn't
+there, so every `/api/*` call returns `502 Bad Gateway`.
+
+There are two separate "localhost"s in play:
+
+| Who says `localhost`        | What it means                                            |
+|-----------------------------|----------------------------------------------------------|
+| Your **browser** → `:5174/` | The host's port 5174 → Docker-mapped to the client ✓     |
+| The **client container** → `MCP_BASE_URL` | The container's own loopback ✗ (no MCP server there) |
+
+Pick the pattern that matches your deployment:
+
+| Deployment                                    | Correct `MCP_BASE_URL`                                       |
+|-----------------------------------------------|--------------------------------------------------------------|
+| Server runs on the host, outside Docker       | `http://host.docker.internal:8000` (use `--add-host=host.docker.internal:host-gateway` on Linux) |
+| Server runs in its own container, same host   | `http://sonic-mcp:8000` (both containers on the same user-defined Docker network, referenced by container name) |
+| Server runs on a remote host                  | `http://<server-lan-ip>:8000`                                |
+| **Anything with `localhost` / `127.0.0.1`**   | **Broken — don't.**                                          |
+
+If you see `502` in the UI and `ECONNREFUSED` in `docker logs`, this is
+almost always the cause.
 
 ---
 

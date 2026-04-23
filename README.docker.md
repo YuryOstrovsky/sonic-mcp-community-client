@@ -65,29 +65,85 @@ freely; state sits on the host.
 
 ## 6. Networking patterns
 
-**Server on the same host (outside Docker):**
+> **⚠ The `localhost` pitfall, read this first.**
+>
+> Inside the client container, `localhost` is the **container's own
+> loopback** — not your host. Setting `MCP_BASE_URL=http://localhost:8000`
+> or `http://127.0.0.1:8000` is the #1 reason `/api/*` returns
+> `502 Bad Gateway`. There are two "localhost"s in play:
+>
+> | Who says `localhost`        | What it means                                    |
+> |-----------------------------|--------------------------------------------------|
+> | Your **browser** → `:5174/` | The host's port 5174 → Docker-mapped to the client ✓ |
+> | The **client container** → `MCP_BASE_URL` | The container's loopback ✗ (no MCP server there) |
+>
+> Use one of the patterns below — never `localhost`/`127.0.0.1` inside the container.
+
+### A. Server runs on the host, outside Docker
+
 ```yaml
 environment:
   - MCP_BASE_URL=http://host.docker.internal:8000
+extra_hosts:
+  - "host.docker.internal:host-gateway"   # required on Linux
 ```
-On Linux this works because `docker-compose.yml` maps
-`host.docker.internal → host-gateway` explicitly.
 
-**Server in its own container on the same host:**
-Put both containers on a user-defined network and reference by name:
+The shipped `docker-compose.yml` includes the `extra_hosts` mapping —
+works out of the box on Linux, macOS, and Windows Docker Desktop.
+
+### B. Server and client are both in containers on the same host
+
+Best practice: put both on a user-defined Docker network and reference
+the server by its container name. Example combined compose:
+
 ```yaml
-environment:
-  - MCP_BASE_URL=http://sonic-mcp:8000
-networks:
-  - sonic_net
-```
-(Server must also join `sonic_net`.)
+services:
+  sonic-mcp:
+    image: extremecanada/sonic-mcp-community-server:latest
+    container_name: sonic-mcp
+    env_file: server.env
+    networks: [sonic_net]
+    volumes:
+      - ./server/config:/app/config
+      - ./server/logs:/app/logs
+      - ./server/snapshots:/app/snapshots
 
-**Server on a remote host:**
+  client:
+    image: extremecanada/sonic-mcp-community-client:latest
+    container_name: sonic-mcp-client
+    environment:
+      - MCP_BASE_URL=http://sonic-mcp:8000   # ← container name, not localhost
+    ports: ["5174:5174"]
+    volumes:
+      - ./client/data:/app/backend/data
+    depends_on: [sonic-mcp]
+    networks: [sonic_net]
+
+networks:
+  sonic_net:
+    driver: bridge
+```
+
+No `host.docker.internal`, no `--add-host` — Docker's embedded DNS
+resolves `sonic-mcp` to the other container's IP on `sonic_net`.
+
+### C. Server runs on a remote host
+
 ```env
 MCP_BASE_URL=http://10.0.0.5:8000
 ```
-Straightforward — no extra docker network tricks needed.
+
+Straightforward — no extra Docker network tricks. Just make sure
+port 8000 is reachable from wherever the client container lives.
+
+### Quick reference
+
+| Deployment                                        | `MCP_BASE_URL`                        |
+|---------------------------------------------------|---------------------------------------|
+| Server on host (outside Docker), client in Docker | `http://host.docker.internal:8000` *(+ extra_hosts on Linux)* |
+| Both in containers, same host, same network       | `http://sonic-mcp:8000`               |
+| Server on a remote host                           | `http://<server-ip-or-hostname>:8000` |
+| **`localhost` / `127.0.0.1` from inside the client container** | **Broken. Always.** |
 
 ## 7. Security notes
 
@@ -117,9 +173,11 @@ in `./data` — the image swap doesn't touch them.
 
 ## 9. Troubleshooting
 
-| Symptom | Likely cause |
+| Symptom | Likely cause + fix |
 |---|---|
-| `502 Bad Gateway` in the UI | `MCP_BASE_URL` wrong / server unreachable from container |
-| Health check fails at boot | Server is completely unreachable — container boots but `/api/health` probe times out |
-| OpenAI key disappears after rebuild | `./data` wasn't mounted; settings went into the container fs |
-| UI loads but all tools 502 | Client reached backend but backend can't reach MCP server — check `docker compose logs client` |
+| `502 Bad Gateway` in the UI | `MCP_BASE_URL` wrong / server unreachable from inside the container. See §6. **Most common cause:** `MCP_BASE_URL=http://localhost:8000` or `127.0.0.1` — that's the container's loopback, not the host. Use `host.docker.internal` or the container name. |
+| `ECONNREFUSED` to `127.0.0.1:8000` in `docker compose logs client` | Textbook localhost-from-container mistake. Change `MCP_BASE_URL` per §6. |
+| Health check fails at boot | Server is completely unreachable — container boots but `/api/health` probe times out. Verify `curl -v http://<MCP_BASE_URL>/health` from a `docker exec` shell. |
+| OpenAI key disappears after rebuild | `./data` wasn't mounted; settings went into the container fs. Re-add `-v $(pwd)/data:/app/backend/data`. |
+| UI loads but all tools 502 | Client reached the proxy but the proxy can't reach MCP server. Check `MCP_BASE_URL` (§6) and that the server replies to `/health` from another host. |
+| Settings save fails silently (OpenAI key vanishes on next load) | `./data` on the host is owned by `root` — Docker created it when the container started. `mkdir -p data` + `sudo chown 1000:1000 data` before `docker compose up`. |

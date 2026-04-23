@@ -91,8 +91,10 @@ The shipped `docker-compose.yml` references
 `docker compose up -d` pulls from Docker Hub if no local image is built.
 
 See [`README.docker.md`](./README.docker.md) for install / stop / update
-/ rebuild details, networking patterns, upgrade procedure,
-troubleshooting.
+/ rebuild details, networking patterns, upgrade procedure, and
+troubleshooting — in particular, the
+[localhost-inside-a-container pitfall](./README.docker.md#6-networking-patterns)
+that's the #1 cause of `502 Bad Gateway` errors.
 
 ### B. systemd (bare-metal)
 
