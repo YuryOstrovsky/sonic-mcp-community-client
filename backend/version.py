@@ -10,4 +10,4 @@ The client and server are released with matching versions; a client
 v0.1.x targets a server v0.1.x.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
