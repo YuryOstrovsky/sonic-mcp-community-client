@@ -113,7 +113,7 @@ services:
     container_name: sonic-mcp-client
     environment:
       - MCP_BASE_URL=http://sonic-mcp:8000   # ← container name, not localhost
-    ports: ["5174:5174"]
+    ports: ["127.0.0.1:5174:5174"]           # localhost-only by default
     volumes:
       - ./client/data:/app/backend/data
     depends_on: [sonic-mcp]
@@ -148,11 +148,18 @@ port 8000 is reachable from wherever the client container lives.
 ## 7. Security notes
 
 - Runs as non-root user `mcpc` (uid 1000) with `no-new-privileges`.
+- **Bound to `127.0.0.1` by default** — never publish port 5174 to the
+  Internet. For LAN access, override the port mapping and put an authenticated
+  reverse proxy (SSO / OAuth2-proxy / Authelia / basic auth) in front.
+- **Two auth boundaries:** set `MCP_API_KEY` to match the server (forwarded
+  upstream, never sent to the browser) and `CLIENT_API_KEY` (a *different*
+  secret) to gate this proxy's sensitive routes. When `CLIENT_API_KEY` is
+  unset the backend logs a warning. See the repo `SECURITY.md`.
 - `settings.json` (which may contain an OpenAI API key) is written with
-  mode 0600 by the backend. Keep `./data/` permissions tight on the host.
-- **This build has no auth on the web UI or the `/api/*` proxy.** Put
-  it on a trusted network (VPN, Tailscale, Cloudflare Access…) before
-  exposing to the public internet.
+  mode 0600 into the mounted `./data` volume. Keep `./data/` permissions tight.
+- **LLM privacy:** with OpenAI selected, NL queries + tool descriptions + (unless
+  `LLM_INCLUDE_DEVICE_CONTEXT=0`) device context leave the local environment.
+  Use Ollama or disable LLM fallback for fully local operation.
 - The mutation ledger lives on the *server* side, not the client —
   rebuilding or redeploying the client never loses audit trail.
 

@@ -42,7 +42,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # ownership (for settings.json) behaves naturally.
 RUN groupadd --system --gid 1000 mcpc \
  && useradd  --system --uid 1000 --gid 1000 --home-dir /app --shell /bin/bash mcpc \
- && mkdir -p /app/backend /app/frontend/dist \
+ && mkdir -p /app/backend/data /app/frontend/dist \
  && chown -R mcpc:mcpc /app
 
 WORKDIR /app
@@ -63,7 +63,8 @@ EXPOSE 5174
 
 ENV MCP_BASE_URL=http://host.docker.internal:8000 \
     MCP_TIMEOUT_SECONDS=30 \
-    SONIC_MCP_CLIENT_PORT=5174
+    SONIC_MCP_CLIENT_PORT=5174 \
+    CLIENT_SETTINGS_PATH=/app/backend/data/settings.json
 
 # The backend's settings.json lives here in a volume so API keys /
 # preferences survive rebuilds without being baked into the image.

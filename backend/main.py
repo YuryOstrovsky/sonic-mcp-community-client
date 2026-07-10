@@ -1,8 +1,13 @@
 """SONiC MCP Community Client — backend.
 
-A thin, auth-less FastAPI proxy between the React frontend and the SONiC MCP
-server. Mirrors the server's invoke envelope so the frontend doesn't need
-to talk to two different contracts.
+A thin FastAPI proxy between the React frontend and the SONiC MCP server.
+Mirrors the server's invoke envelope so the frontend doesn't need to talk to
+two different contracts.
+
+Trust boundaries (see SECURITY.md):
+  Browser/user → CLIENT_API_KEY → client backend → MCP_API_KEY → MCP server
+Both keys are optional but recommended; when CLIENT_API_KEY is unset the proxy
+logs a warning and relies on a localhost bind / authenticated reverse proxy.
 
 Routes:
   GET  /api/health          — client health + upstream MCP reachability
@@ -12,29 +17,32 @@ Routes:
   POST /api/nl              — deterministic NL router → suggests tool + inputs
                               (with ?auto=true, also invokes and returns the result)
   GET  /api/examples        — static list of example prompts for the UI
-  GET  /api/client-settings — view MCP base URL + timeouts (read-only)
-  GET  /api/openai-status   — stub: always reports disabled in Phase A
-
-Phase A has no auth. Community deployment sits behind VPN / trusted network.
+  GET  /api/client-settings — view MCP base URL + timeouts (auth-gated)
+  GET  /api/openai-status   — whether an OpenAI key is configured
 """
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from nl_router import EXAMPLES, SWITCH_ALIASES, route as nl_route
+from version import __version__
 import llm
 import settings as settings_mod
 
@@ -53,16 +61,76 @@ logger = logging.getLogger("mcp-client")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 MCP_TIMEOUT = float(os.environ.get("MCP_TIMEOUT_SECONDS", "30"))
 
-app = FastAPI(title="SONiC MCP Community Client — backend")
+# Upstream credential — forwarded to the MCP server on every call when the
+# server has MCP_API_KEY enabled (the recommended secure config). Stays in
+# the backend only; it is NEVER sent to the browser.
+MCP_API_KEY = os.environ.get("MCP_API_KEY", "").strip()
 
-# CORS: permissive in Phase A — server is behind VPN. Tighten in prod.
+# Client-facing credential — a DIFFERENT secret that gates this proxy's own
+# sensitive routes. When set, callers must send `Authorization: Bearer
+# <CLIENT_API_KEY>`. Two distinct trust boundaries:
+#     Browser/user → CLIENT_API_KEY → client backend → MCP_API_KEY → MCP server
+# For a browser UI, put an authenticating reverse proxy in front (SSO /
+# OAuth2-proxy / Authelia / basic auth) and/or bind to localhost; CLIENT_API_KEY
+# is primarily for scripted or reverse-proxy-injected access.
+CLIENT_API_KEY = os.environ.get("CLIENT_API_KEY", "").strip()
+
+# When an LLM fallback (OpenAI/Ollama) is used for an unmatched NL query, the
+# backend can include live device context (management IPs, reachability) in the
+# prompt. For OpenAI this leaves the local environment. Set to 0 to withhold
+# device IPs from the external LLM context. Default 1 preserves selection quality.
+LLM_INCLUDE_DEVICE_CONTEXT = os.environ.get(
+    "LLM_INCLUDE_DEVICE_CONTEXT", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+
+app = FastAPI(title="SONiC MCP Community Client — backend", version=__version__)
+
+# CORS: restrictive by default. Single-port production (frontend + API on the
+# same origin) needs no cross-origin access at all, so the allow-list is empty
+# unless CLIENT_CORS_ORIGINS is set (e.g. http://localhost:5173 for Vite dev).
+_cors_raw = os.environ.get("CLIENT_CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-MCP-Session", "Authorization"],
 )
+
+# ---------------------------------------------------------------
+# Client-facing auth (Bearer token on sensitive /api routes)
+# ---------------------------------------------------------------
+if not CLIENT_API_KEY:
+    logger.warning(
+        "CLIENT_API_KEY is not set — this proxy has NO client-facing auth. "
+        "Anyone who can reach the port can invoke tools, change inventory, "
+        "and edit LLM/API-key settings. Bind to localhost or put an "
+        "authenticated reverse proxy in front. Never expose it to the Internet."
+    )
+if MCP_API_KEY and not CLIENT_API_KEY:
+    logger.warning(
+        "MCP_API_KEY is set but CLIENT_API_KEY is not — the upstream server "
+        "credential is reachable by anyone who can hit this proxy. Set "
+        "CLIENT_API_KEY (a different secret) or front the proxy with auth."
+    )
+
+
+def require_client_auth(authorization: Optional[str] = Header(default=None)) -> None:
+    """Dependency enforcing the client Bearer key on sensitive routes.
+
+    No-op when CLIENT_API_KEY is unset. Constant-time compare so the check
+    doesn't leak the key via timing.
+    """
+    if not CLIENT_API_KEY:
+        return
+    expected = f"Bearer {CLIENT_API_KEY}"
+    if not hmac.compare_digest(authorization or "", expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid client API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 # ---------------------------------------------------------------
@@ -74,10 +142,16 @@ _http: Optional[httpx.AsyncClient] = None
 def _client() -> httpx.AsyncClient:
     global _http
     if _http is None:
+        headers = {"Accept": "application/json"}
+        # Forward the upstream key so protected server endpoints (/invoke,
+        # inventory writes, intent writes, probe) work when the server has
+        # MCP_API_KEY enabled. Backend-only — never exposed to the browser.
+        if MCP_API_KEY:
+            headers["Authorization"] = f"Bearer {MCP_API_KEY}"
         _http = httpx.AsyncClient(
             base_url=MCP_BASE_URL,
             timeout=MCP_TIMEOUT,
-            headers={"Accept": "application/json"},
+            headers=headers,
         )
     return _http
 
@@ -90,11 +164,23 @@ async def _shutdown() -> None:
         _http = None
 
 
+def _upstream_error(exc: Exception) -> HTTPException:
+    """Sanitize an upstream transport failure. The raw exception can carry the
+    MCP host/IP/port and DNS/connection internals — log it server-side under a
+    request ID and return only that ID to the caller."""
+    request_id = uuid.uuid4().hex[:12]
+    logger.warning("mcp upstream error request_id=%s: %s", request_id, exc)
+    return HTTPException(
+        status_code=502,
+        detail={"detail": "MCP server is unavailable", "request_id": request_id},
+    )
+
+
 async def _mcp_get(path: str, *, headers: Optional[Dict[str, str]] = None) -> httpx.Response:
     try:
         return await _client().get(path, headers=headers or {})
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"MCP upstream error: {e}") from e
+        raise _upstream_error(e) from e
 
 
 async def _mcp_post(
@@ -106,7 +192,7 @@ async def _mcp_post(
     try:
         return await _client().post(path, json=json_body, headers=headers or {})
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"MCP upstream error: {e}") from e
+        raise _upstream_error(e) from e
 
 
 async def _mcp_put(
@@ -118,7 +204,7 @@ async def _mcp_put(
     try:
         return await _client().put(path, json=json_body, headers=headers or {})
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"MCP upstream error: {e}") from e
+        raise _upstream_error(e) from e
 
 
 # ---------------------------------------------------------------
@@ -143,24 +229,25 @@ class NlReq(BaseModel):
 @app.get("/api/health")
 async def health() -> Dict[str, Any]:
     """Always returns 200 as long as the backend is alive. Also reports
-    whether the upstream MCP server responded on /health."""
-    upstream: Dict[str, Any] = {"base_url": MCP_BASE_URL, "reachable": False}
+    whether the upstream MCP server responded — but NOT its URL, which is not
+    exposed to unauthenticated callers."""
+    upstream: Dict[str, Any] = {"reachable": False}
     try:
         r = await _mcp_get("/health")
         upstream["status_code"] = r.status_code
-        if r.status_code == 200:
-            upstream["reachable"] = True
-            upstream["body"] = r.json()
-    except HTTPException as e:
-        upstream["error"] = e.detail
+        upstream["reachable"] = r.status_code == 200
+    except HTTPException:
+        upstream["reachable"] = False
     except Exception as e:
-        upstream["error"] = str(e)
+        # Logged, not surfaced — no host/DNS details to the caller.
+        logger.warning("health upstream probe failed: %s", e)
+        upstream["reachable"] = False
 
     return {
         "status": "ok",
         "service": "sonic-mcp-client-backend",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "0.1-phaseA",
+        "version": __version__,
         "upstream": upstream,
     }
 
@@ -188,7 +275,7 @@ async def tools() -> List[Dict[str, Any]]:
     return r.json()
 
 
-@app.post("/api/invoke")
+@app.post("/api/invoke", dependencies=[Depends(require_client_auth)])
 async def invoke(req: InvokeReq, request: Request) -> Dict[str, Any]:
     """Proxies tool invocations to the MCP server. Session header is forwarded."""
     headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -218,7 +305,7 @@ async def invoke(req: InvokeReq, request: Request) -> Dict[str, Any]:
     return data
 
 
-@app.post("/api/nl")
+@app.post("/api/nl", dependencies=[Depends(require_client_auth)])
 async def nl(req: NlReq, request: Request, auto: bool = False) -> Dict[str, Any]:
     """Natural-language → tool routing. Returns the suggestion. If ?auto=true
     and a switch was identified, also invokes the tool and includes the result.
@@ -243,19 +330,20 @@ async def nl(req: NlReq, request: Request, auto: bool = False) -> Dict[str, Any]
                     tools_list = r.json()
             except Exception as e:
                 logger.warning("llm fallback: /tools failed: %s", e)
-            try:
-                r = await _mcp_get("/ready")
-                body = r.json() if r.content else {}
-                for ip, d in (body.get("checks") or {}).get("devices", {}).items():
-                    devices_list.append(
-                        {
-                            "switch_ip": ip,
-                            "restconf_ok": bool(d.get("restconf")),
-                            "ssh_ok": bool(d.get("ssh")),
-                        }
-                    )
-            except Exception as e:
-                logger.warning("llm fallback: /ready failed: %s", e)
+            if LLM_INCLUDE_DEVICE_CONTEXT:
+                try:
+                    r = await _mcp_get("/ready")
+                    body = r.json() if r.content else {}
+                    for ip, d in (body.get("checks") or {}).get("devices", {}).items():
+                        devices_list.append(
+                            {
+                                "switch_ip": ip,
+                                "restconf_ok": bool(d.get("restconf")),
+                                "ssh_ok": bool(d.get("ssh")),
+                            }
+                        )
+                except Exception as e:
+                    logger.warning("llm fallback: /ready failed: %s", e)
 
             llm_pick = await llm.select_tool(
                 req.text, tools_list, devices_list, SWITCH_ALIASES
@@ -454,8 +542,7 @@ async def _build_help_payload() -> Dict[str, Any]:
     return {
         "service": {
             "name": "SONiC MCP Community Client",
-            "phase": "3b",
-            "mcp_base_url": MCP_BASE_URL,
+            "version": __version__,
             "ready_status": ready_status,
             "device_count": len(devices),
             "tool_count": len(tools),
@@ -503,15 +590,16 @@ async def help_endpoint() -> Dict[str, Any]:
     return await _build_help_payload()
 
 
-@app.get("/api/client-settings")
+@app.get("/api/client-settings", dependencies=[Depends(require_client_auth)])
 async def client_settings() -> Dict[str, Any]:
-    """Read-only view of the backend's upstream configuration. Phase A has
-    no write endpoints — edit .env and restart to change."""
+    """Backend configuration view. Gated by client auth because it reveals the
+    upstream MCP URL and the proxy's auth posture."""
     return {
         "mcp_base_url": MCP_BASE_URL,
         "mcp_timeout_seconds": MCP_TIMEOUT,
-        "auth": "none",
-        "phase": "A",
+        "version": __version__,
+        "client_auth": "enabled" if CLIENT_API_KEY else "disabled",
+        "upstream_auth": "enabled" if MCP_API_KEY else "disabled",
     }
 
 
@@ -525,7 +613,7 @@ class OpenAIKeyReq(BaseModel):
     api_key: Optional[str] = None
 
 
-@app.post("/api/openai-key")
+@app.post("/api/openai-key", dependencies=[Depends(require_client_auth)])
 async def set_openai_key(req: OpenAIKeyReq) -> Dict[str, Any]:
     """Set or clear the OpenAI API key. Now persists to settings.json.
     Kept for backward compatibility with earlier Phase D clients; prefer
@@ -541,7 +629,7 @@ async def llm_status_endpoint() -> Dict[str, Any]:
 
 # ---- persisted settings ----
 
-@app.get("/api/settings")
+@app.get("/api/settings", dependencies=[Depends(require_client_auth)])
 async def get_settings() -> Dict[str, Any]:
     """Safe view of persisted settings. API keys are redacted to `…last4`.
     Includes `*_source` fields so the UI can tell the user where each
@@ -555,7 +643,33 @@ class SettingsPatch(BaseModel):
     preferred_provider: Optional[str] = None  # "openai" | "ollama" | "auto"
 
 
-@app.patch("/api/settings")
+def _validate_ollama_base_url(url: str) -> None:
+    """Reject an operator-supplied Ollama URL that would create an SSRF hole.
+
+    The backend later issues HTTP requests to this address, and the settings
+    route can persist it. We keep it strict but lab-friendly: http/https only,
+    no embedded credentials, a real host, and no cloud-metadata / link-local
+    target. Private LAN IPs are allowed (Ollama is typically local).
+    """
+    if not url or not url.strip():
+        return
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(422, "ollama base_url must use http or https")
+    if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
+        raise HTTPException(422, "ollama base_url must not embed credentials")
+    if not parsed.hostname:
+        raise HTTPException(422, "ollama base_url must include a host")
+    try:
+        ip = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_link_local or ip.is_multicast or ip.is_reserved):
+        # 169.254.169.254 (cloud metadata) is link-local — blocked here.
+        raise HTTPException(422, "ollama base_url points at a disallowed address")
+
+
+@app.patch("/api/settings", dependencies=[Depends(require_client_auth)])
 async def patch_settings(req: SettingsPatch) -> Dict[str, Any]:
     """Partial update. Send only the fields you want to change.
     To clear a value, send empty string or null.
@@ -570,6 +684,8 @@ async def patch_settings(req: SettingsPatch) -> Dict[str, Any]:
     if req.openai is not None:
         update["openai"] = req.openai
     if req.ollama is not None:
+        if req.ollama.get("base_url"):
+            _validate_ollama_base_url(str(req.ollama["base_url"]))
         update["ollama"] = req.ollama
     if req.preferred_provider is not None:
         if req.preferred_provider not in ("openai", "ollama", "auto"):
@@ -605,6 +721,9 @@ class _InventoryDeviceReq(BaseModel):
     tags: List[str] = []
     username: Optional[str] = None
     password: Optional[str] = None
+    # Preferred over inline password: name of an env var on the SERVER that
+    # holds the secret. Forwarded to the MCP server, which resolves it.
+    password_env: Optional[str] = None
 
 
 class _InventoryPutReq(BaseModel):
@@ -623,29 +742,29 @@ async def inventory_get() -> Dict[str, Any]:
     return _unwrap_or_raise(r)
 
 
-@app.put("/api/inventory")
+@app.put("/api/inventory", dependencies=[Depends(require_client_auth)])
 async def inventory_put(req: _InventoryPutReq) -> Dict[str, Any]:
     body = {"switches": [s.model_dump() for s in req.switches]}
     r = await _mcp_put("/inventory", json_body=body)
     return _unwrap_or_raise(r)
 
 
-@app.post("/api/inventory/switches")
+@app.post("/api/inventory/switches", dependencies=[Depends(require_client_auth)])
 async def inventory_add(req: _InventoryDeviceReq) -> Dict[str, Any]:
     r = await _mcp_post("/inventory/switches", json_body=req.model_dump())
     return _unwrap_or_raise(r)
 
 
-@app.delete("/api/inventory/switches/{mgmt_ip}")
+@app.delete("/api/inventory/switches/{mgmt_ip}", dependencies=[Depends(require_client_auth)])
 async def inventory_del(mgmt_ip: str) -> Dict[str, Any]:
     try:
         r = await _client().delete(f"/inventory/switches/{mgmt_ip}")
     except httpx.HTTPError as e:
-        raise HTTPException(502, f"MCP upstream error: {e}") from e
+        raise _upstream_error(e) from e
     return _unwrap_or_raise(r)
 
 
-@app.post("/api/inventory/probe")
+@app.post("/api/inventory/probe", dependencies=[Depends(require_client_auth)])
 async def inventory_probe(req: _InventoryProbeReq) -> Dict[str, Any]:
     r = await _mcp_post("/inventory/probe", json_body=req.model_dump())
     return _unwrap_or_raise(r)
@@ -669,7 +788,7 @@ class _FabricIntentPut(BaseModel):
     raw: Optional[str] = None
 
 
-@app.put("/api/fabric-intent")
+@app.put("/api/fabric-intent", dependencies=[Depends(require_client_auth)])
 async def fabric_intent_put(req: _FabricIntentPut) -> Dict[str, Any]:
     body: Dict[str, Any] = {}
     if req.content is not None:

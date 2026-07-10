@@ -31,24 +31,52 @@ jobs:
         run: npm run build
 
   backend:
-    name: Backend sanity
+    name: Backend (ruff + pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements-dev.txt
       - name: Install backend deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-      - name: Syntax + import check
-        # The backend has no test suite yet — at minimum verify it
-        # imports cleanly on a fresh install.
+          pip install -r backend/requirements-dev.txt
+      - name: Ruff
+        run: ruff check backend/
+      - name: Import check
+        run: python -c "import sys; sys.path.insert(0, 'backend'); import main, nl_router, llm, settings, version"
+      - name: pytest
+        working-directory: backend
+        run: pytest -q
+
+  audit:
+    name: Dependency audit (pip + npm)
+    runs-on: ubuntu-latest
+    # Informational on PRs (not a required check) so a future advisory in
+    # build tooling can't deadlock every merge. The release workflow runs both
+    # audits with --strict / --audit-level and DOES block a release on them.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit (backend)
         run: |
-          python -c "import sys; sys.path.insert(0, 'backend'); import main; import nl_router; import llm"
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r backend/requirements.txt --strict
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm audit (frontend, high+)
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm audit --audit-level=high
 
   docker:
     name: Docker image build
@@ -65,6 +93,14 @@ jobs:
           push: false
           load: true
           tags: sonic-mcp-community-client:ci
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: sonic-mcp-community-client:ci
+          format: table
+          exit-code: "0"   # report only — don't fail PRs on base-image CVEs
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
       - name: Smoke test
         # Start the container with a fake MCP_BASE_URL. /api/health
         # doesn't reach upstream — if it answers 200 the stack boots.
