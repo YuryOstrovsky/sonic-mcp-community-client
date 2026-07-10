@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------
 # Stage 1 — build the React frontend
 # ---------------------------------------------------------------
-FROM node:22-alpine AS frontend-build
+FROM node:26-alpine AS frontend-build
 
 WORKDIR /frontend
 
