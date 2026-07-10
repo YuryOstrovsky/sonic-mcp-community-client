@@ -77,10 +77,11 @@ CLIENT_API_KEY = os.environ.get("CLIENT_API_KEY", "").strip()
 
 # When an LLM fallback (OpenAI/Ollama) is used for an unmatched NL query, the
 # backend can include live device context (management IPs, reachability) in the
-# prompt. For OpenAI this leaves the local environment. Set to 0 to withhold
-# device IPs from the external LLM context. Default 1 preserves selection quality.
+# prompt. For OpenAI this leaves the local environment, so the default is OFF
+# (security-first). Set LLM_INCLUDE_DEVICE_CONTEXT=1 to opt in and improve
+# tool-selection quality (lets the LLM resolve switch_ip from device context).
 LLM_INCLUDE_DEVICE_CONTEXT = os.environ.get(
-    "LLM_INCLUDE_DEVICE_CONTEXT", "1"
+    "LLM_INCLUDE_DEVICE_CONTEXT", "0"
 ).strip().lower() in ("1", "true", "yes", "on")
 
 app = FastAPI(title="SONiC MCP Community Client — backend", version=__version__)
