@@ -12,6 +12,7 @@ import {
   getSettings, patchSettings,
   getFabricIntent, putFabricIntent,
   getInventory, addInventorySwitch, deleteInventorySwitch, probeInventorySwitch, discoverFabric,
+  getClientApiKey, setClientApiKey, clearClientApiKey,
   type SettingsView as S, type FabricIntentView,
   type InventoryView, type ProbeResult,
 } from "./lib/api";
@@ -80,7 +81,15 @@ export function SettingsView() {
   }
 
   if (!data) {
-    return <div className="p-5">{err ? <ErrorBanner>{err}</ErrorBanner> : <Loading />}</div>;
+    // getSettings() is auth-gated: a 401 here usually means the backend has
+    // CLIENT_API_KEY set but this browser hasn't supplied it. Render the
+    // client-auth field regardless so the user can enter the key and retry.
+    return (
+      <div className="mx-auto max-w-5xl space-y-4 p-5">
+        <ClientAuthSection />
+        {err ? <ErrorBanner>{err}</ErrorBanner> : <Loading />}
+      </div>
+    );
   }
 
   return (
@@ -92,6 +101,8 @@ export function SettingsView() {
           Precedence: <b>settings.json → .env → default</b>.
         </p>
       </div>
+
+      <ClientAuthSection />
 
       {flash && (
         <div className="rounded-md border border-green-500/20 bg-green-500/10 px-3 py-2 text-sm text-green-300">
@@ -657,6 +668,61 @@ const INPUT_CLS = "w-full rounded border border-white/10 bg-[#0d1220] px-3 py-2 
 // server's /inventory endpoints; writes go straight to
 // config/inventory.json (live-reloaded by the server).
 
+function ClientAuthSection() {
+  const [key, setKey] = useState(getClientApiKey() ?? "");
+  const hasKey = !!getClientApiKey();
+
+  function save() {
+    const k = key.trim();
+    if (!k) { notify.err("enter a key first"); return; }
+    setClientApiKey(k);
+    notify.ok("client key saved for this tab — reloading");
+    // Reload so every view refetches with the Authorization header applied.
+    setTimeout(() => location.reload(), 400);
+  }
+  function clear() {
+    clearClientApiKey();
+    setKey("");
+    notify.ok("client key cleared — reloading");
+    setTimeout(() => location.reload(), 400);
+  }
+
+  return (
+    <Section
+      title="Client authentication"
+      badge={<Chip tone={hasKey ? "good" : "neutral"}>{hasKey ? "key set" : "no key"}</Chip>}
+      defaultOpen={!hasKey}
+    >
+      <p className="mb-3 text-sm text-gray-400">
+        If the backend has <code className="rounded bg-white/[0.04] px-1 text-xs">CLIENT_API_KEY</code> set,
+        enter it here to authorize this browser for sensitive actions (invoke, settings,
+        inventory writes). Stored in <strong>sessionStorage only</strong> — cleared when the
+        tab closes, never written to disk. For shared deployments, prefer an authenticating
+        reverse proxy that injects the header instead (see SECURITY.md). Leave blank if the
+        backend has no client key.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="password" className={INPUT_CLS}
+          placeholder="Bearer key"
+          value={key} onChange={(e) => setKey(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+        />
+        <button
+          onClick={save}
+          className="rounded bg-orange-600/90 px-4 py-2 text-sm font-medium text-white hover:bg-orange-600"
+        >Save</button>
+        {hasKey && (
+          <button
+            onClick={clear}
+            className="rounded border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-gray-300 hover:bg-white/[0.08]"
+          >Clear</button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function FabricInventorySection() {
   const [inv, setInv] = useState<InventoryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -665,7 +731,7 @@ function FabricInventorySection() {
   const [probeResults, setProbeResults] = useState<Record<string, ProbeResult>>({});
 
   // Add-form state
-  const [form, setForm] = useState({name: "", mgmt_ip: "", tags: "", username: "", password: ""});
+  const [form, setForm] = useState({name: "", mgmt_ip: "", tags: "", username: "", password: "", password_env: ""});
 
   // Discovery state
   const [discoverSeed, setDiscoverSeed] = useState("");
@@ -688,9 +754,10 @@ function FabricInventorySection() {
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         username: form.username.trim() || undefined,
         password: form.password || undefined,
+        password_env: form.password_env.trim() || undefined,
       });
       setInv(next);
-      setForm({name: "", mgmt_ip: "", tags: "", username: "", password: ""});
+      setForm({name: "", mgmt_ip: "", tags: "", username: "", password: "", password_env: ""});
       notify.ok(`added ${form.mgmt_ip}`);
     } catch (e: any) {
       notify.err("add failed", e?.message ?? String(e));
@@ -787,7 +854,9 @@ function FabricInventorySection() {
                     <td className="px-3 py-2 font-mono text-gray-300">{d.mgmt_ip}</td>
                     <td className="px-3 py-2 text-xs text-gray-400">{d.tags.join(" · ") || "—"}</td>
                     <td className="px-3 py-2 text-xs">
-                      {d.username || d.has_password
+                      {d.password_env
+                        ? <span className="text-gray-300" title={d.password_env}>env var: {d.password_env}</span>
+                        : d.username || d.has_password
                         ? <span className="text-gray-300">override set</span>
                         : <span className="text-gray-500">env defaults</span>}
                     </td>
@@ -845,7 +914,17 @@ function FabricInventorySection() {
               placeholder="leave blank → SONIC_DEFAULT_PASSWORD"
               value={form.password} onChange={(e) => setForm({...form, password: e.target.value})} />
           </Field>
+          <Field label="Password env var (preferred over inline password)" id="inv-pwenv">
+            <input id="inv-pwenv" className={INPUT_CLS}
+              placeholder="e.g. SONIC_SPINE1_PASSWORD (name of a server env var)"
+              value={form.password_env} onChange={(e) => setForm({...form, password_env: e.target.value})} />
+          </Field>
         </div>
+        <p className="mt-2 text-xs text-gray-500">
+          Prefer <strong>Password env var</strong> — it stores only the variable name,
+          keeping the plaintext secret out of the inventory file. If both are set, the
+          inline password wins.
+        </p>
         <div className="mt-3 flex justify-end">
           <button
             onClick={addSwitch} disabled={busy || !form.mgmt_ip.trim()}

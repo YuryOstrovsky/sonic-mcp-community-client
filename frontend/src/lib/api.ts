@@ -1,13 +1,18 @@
 /**
  * Minimal client-side API wrapper.
  *
- * No auth (community-grade). Session ID is stored in sessionStorage so it
- * survives page refresh but not tab close — matches the MCP server's
- * session model. Always sent as the `X-MCP-Session` header via the backend
- * proxy, which forwards to the MCP server.
+ * Session ID is stored in sessionStorage so it survives page refresh but not
+ * tab close — matches the MCP server's session model. Sent as `X-MCP-Session`.
+ *
+ * Client auth: when the backend has CLIENT_API_KEY set, sensitive routes
+ * require `Authorization: Bearer <key>`. The key is entered in Settings and
+ * kept in sessionStorage ONLY (cleared on tab close, never in localStorage).
+ * For shared deployments, prefer an authenticating reverse proxy that injects
+ * the header instead of entering a key here (see SECURITY.md).
  */
 
 const SESSION_KEY = "sonic_mcp_session";
+const CLIENT_KEY = "sonic_client_api_key";
 // Use the Vite dev-proxy prefix so /api/* works in both dev and prod builds.
 const API = "/api";
 
@@ -22,10 +27,23 @@ export function clearSession(): void {
   sessionStorage.removeItem(SESSION_KEY);
 }
 
+// ─── Client API key (browser → backend auth) ────────────────────────────────
+export function getClientApiKey(): string | null {
+  return sessionStorage.getItem(CLIENT_KEY);
+}
+export function setClientApiKey(key: string): void {
+  sessionStorage.setItem(CLIENT_KEY, key);
+}
+export function clearClientApiKey(): void {
+  sessionStorage.removeItem(CLIENT_KEY);
+}
+
 function headers(): HeadersInit {
   const h: Record<string, string> = {"Content-Type": "application/json"};
   const s = getSession();
   if (s) h["X-MCP-Session"] = s;
+  const key = getClientApiKey();
+  if (key) h["Authorization"] = `Bearer ${key}`;
   return h;
 }
 
@@ -142,7 +160,7 @@ export async function getExamples(): Promise<string[]> {
 }
 
 export async function getClientSettings(): Promise<any> {
-  return parseOrThrow(await fetch(`${API}/client-settings`));
+  return parseOrThrow(await fetch(`${API}/client-settings`, {headers: headers()}));
 }
 
 export async function getHelp(): Promise<any> {
@@ -156,7 +174,7 @@ export async function getLlmStatus(): Promise<any> {
 export async function setOpenAIKey(key: string | null): Promise<{configured: boolean}> {
   const r = await fetch(`${API}/openai-key`, {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers(),
     body: JSON.stringify({api_key: key}),
   });
   return parseOrThrow(r);
@@ -183,7 +201,7 @@ export type SettingsView = {
 };
 
 export async function getSettings(): Promise<SettingsView> {
-  return parseOrThrow(await fetch(`${API}/settings`));
+  return parseOrThrow(await fetch(`${API}/settings`, {headers: headers()}));
 }
 
 export async function patchSettings(update: {
@@ -193,7 +211,7 @@ export async function patchSettings(update: {
 }): Promise<SettingsView> {
   const r = await fetch(`${API}/settings`, {
     method: "PATCH",
-    headers: {"Content-Type": "application/json"},
+    headers: headers(),
     body: JSON.stringify(update),
   });
   return parseOrThrow(r);
@@ -220,7 +238,7 @@ export async function putFabricIntent(payload: {content?: any; raw?: string}): P
 }> {
   const r = await fetch(`${API}/fabric-intent`, {
     method: "PUT",
-    headers: {"Content-Type": "application/json"},
+    headers: headers(),
     body: JSON.stringify(payload),
   });
   return parseOrThrow(r);
@@ -234,6 +252,9 @@ export type InventoryDevice = {
   tags: string[];
   username: string | null;
   has_password: boolean;
+  // Name of a server-side env var holding the secret (preferred over inline
+  // password). Echoed back by the server; not itself a secret.
+  password_env: string | null;
 };
 
 export type InventoryView = {
@@ -248,6 +269,8 @@ export type InventoryAddPayload = {
   tags?: string[];
   username?: string | null;
   password?: string | null;
+  // Preferred over `password`: name of a server-side env var holding the secret.
+  password_env?: string | null;
 };
 
 export type ProbeResult = {
@@ -264,7 +287,7 @@ export async function getInventory(): Promise<InventoryView> {
 export async function addInventorySwitch(payload: InventoryAddPayload): Promise<InventoryView> {
   const r = await fetch(`${API}/inventory/switches`, {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers(),
     body: JSON.stringify(payload),
   });
   return parseOrThrow(r);
@@ -273,6 +296,7 @@ export async function addInventorySwitch(payload: InventoryAddPayload): Promise<
 export async function deleteInventorySwitch(mgmtIp: string): Promise<InventoryView> {
   const r = await fetch(`${API}/inventory/switches/${encodeURIComponent(mgmtIp)}`, {
     method: "DELETE",
+    headers: headers(),
   });
   return parseOrThrow(r);
 }
@@ -284,7 +308,7 @@ export async function probeInventorySwitch(payload: {
 }): Promise<ProbeResult> {
   const r = await fetch(`${API}/inventory/probe`, {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers(),
     body: JSON.stringify(payload),
   });
   return parseOrThrow(r);
