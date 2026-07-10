@@ -43,16 +43,24 @@ MCP server side.
 docker pull extremecanada/sonic-mcp-community-client:latest
 
 docker run -d --name sonic-mcp-client \
-  -p 5174:5174 \
+  -p 127.0.0.1:5174:5174 \
   -e MCP_BASE_URL=http://<your-mcp-server>:8000 \
+  -e MCP_API_KEY=<same-as-server-if-server-auth-enabled> \
+  -e CLIENT_API_KEY=$(openssl rand -hex 32) \
   -v $(pwd)/data:/app/backend/data \
   --add-host=host.docker.internal:host-gateway \
   extremecanada/sonic-mcp-community-client:latest
 
-# then open:  http://<host>:5174/
+# then open:  http://localhost:5174/
 ```
 
-`MCP_BASE_URL` is the only required setting.
+`MCP_BASE_URL` is the only strictly required setting.
+
+> ⚠️ Bound to **`127.0.0.1`** — this proxy can invoke network-management tools
+> and edit stored API keys, so never publish port 5174 to the Internet. Set
+> `MCP_API_KEY` to match the server, and `CLIENT_API_KEY` (a different secret)
+> to gate the proxy; for browser access put an authenticated reverse proxy in
+> front. See the repo `SECURITY.md`.
 
 ---
 
@@ -92,7 +100,7 @@ services:
     image: extremecanada/sonic-mcp-community-client:latest
     container_name: sonic-mcp-client
     restart: unless-stopped
-    ports: ["5174:5174"]
+    ports: ["127.0.0.1:5174:5174"]   # localhost-only; front with an authenticated proxy for LAN
     env_file: .env
     environment:
       - MCP_BASE_URL=${MCP_BASE_URL:-http://host.docker.internal:8000}
@@ -144,8 +152,9 @@ also be changed live from the Settings view — those persist to
 |---|---|---|
 | `/app/backend/data` | `settings.json` (LLM prefs + optional OpenAI key) | `rw` |
 
-That's it — the client holds no device credentials of its own.
-Everything switch-facing stays on the server side.
+That's it — the client does not **persist** device credentials. Credentials
+entered during inventory add/probe pass through to the MCP server; everything
+switch-facing is stored on the server side.
 
 ---
 

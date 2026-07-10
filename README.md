@@ -59,9 +59,35 @@ compatible MCP endpoint on a trusted network.
                                                                  └───────────────────┘
 ```
 
-The client holds no device credentials — those stay on the MCP server.
-The client's only persistent state is `settings.json` (LLM preferences,
-an optional OpenAI key).
+The client does **not persist** device credentials. Credentials entered
+during inventory add/probe pass **through** the backend to the MCP server
+(and should be used only over a trusted network); prefer `password_env` (a
+server-side env var name) over inline passwords. The client's only
+persistent state is `settings.json` (LLM preferences, an optional OpenAI
+key), stored under `./data`.
+
+---
+
+## Security and intended use
+
+> ⚠️ **This client can invoke network-management tools and edit stored API
+> keys through the MCP server.** Read this before exposing it.
+
+- **Not for public exposure.** Docker/Compose bind to **`127.0.0.1` by
+  default** — do not publish port 5174 to the Internet. For LAN access, front
+  it with an authenticated reverse proxy (SSO / OAuth2-proxy / Authelia / basic
+  auth).
+- **Two auth boundaries** — keep the secrets distinct:
+  `Browser → CLIENT_API_KEY → client backend → MCP_API_KEY → MCP server`.
+  Set `MCP_API_KEY` to match the server; set `CLIENT_API_KEY` to gate this
+  proxy's sensitive routes. When `CLIENT_API_KEY` is unset the backend logs a
+  warning and relies on the localhost bind / reverse proxy.
+- **External LLM disclosure:** with OpenAI selected, an unmatched NL query
+  sends the query, tool descriptions, and (unless `LLM_INCLUDE_DEVICE_CONTEXT=0`)
+  device context to OpenAI. Use Ollama or disable LLM fallback for fully local
+  operation. Never put credentials or confidential data in NL prompts.
+
+See [`SECURITY.md`](./SECURITY.md) for the full policy and private reporting.
 
 ---
 
@@ -140,10 +166,15 @@ All settings are env vars loaded from `.env`:
 |---|---|---|
 | `MCP_BASE_URL` | `http://127.0.0.1:8000` | URL of the SONiC MCP Community Server |
 | `MCP_TIMEOUT_SECONDS` | `30` | HTTP timeout for upstream calls |
+| `MCP_API_KEY` | — | Upstream server key, forwarded as `Authorization: Bearer`. Match the server's `MCP_API_KEY`. Backend-only — never sent to the browser. |
+| `CLIENT_API_KEY` | — | Gates sensitive `/api` routes (Bearer). Unset = no client auth (logs a warning). A **different** secret from `MCP_API_KEY`. |
+| `CLIENT_CORS_ORIGINS` | — (empty) | Comma-separated allowed origins. Empty = no cross-origin (single-port prod). Vite dev: `http://localhost:5173`. |
+| `CLIENT_SETTINGS_PATH` | `backend/data/settings.json` | Where UI settings persist (inside the mounted volume). |
+| `LLM_INCLUDE_DEVICE_CONTEXT` | `1` | Include device IPs/reachability in external-LLM prompts. Set `0` to withhold. |
 | `SONIC_MCP_CLIENT_PORT` | `5174` | Port to bind uvicorn to (in Docker this is the `EXPOSE`/`-p` mapping) |
 | `OPENAI_API_KEY` | — | Optional — preferred over the UI-set key if present |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default OpenAI model |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint when enabled |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint when enabled (validated: http/https, no creds, no metadata IPs) |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Default Ollama model |
 
 Runtime settings (LLM provider pick, API keys, Ollama model choice) can
@@ -192,21 +223,44 @@ npm run build      # tsc -b && vite build
 npm run dev        # Vite dev server at :5173
 ```
 
-CI (GitHub Actions) lint + build + docker image build on every PR.
+CI (GitHub Actions) runs, on every PR: frontend ESLint + build + `npm audit`,
+backend ruff + pytest, `pip-audit`, and a Docker image build + Trivy scan +
+boot smoke. Dependabot keeps deps, Actions, and base images fresh.
 
 ---
 
-## Few screenshots of MCP client
+## Compatibility
 
+The client and server are released with **matching versions** — run a client
+`0.1.x` against a server `0.1.x`. The client auto-discovers tools from the
+server's `/tools` catalog, so it adapts to whatever tools the connected server
+version exposes.
 
+| Client | Server | Status |
+|---|---|---|
+| 0.1.x | 0.1.x | ✅ Supported |
+| 0.1.x | other 0.x | ⚠️ Best-effort — reads work; newer server-only tools may lack a dedicated widget (fall back to JSON view) |
 
-<img width="1712" height="865" alt="image" src="https://github.com/user-attachments/assets/418053fd-21d6-41ea-8e23-5b1f7df1fe9e" />
+Auth: when the server has `MCP_API_KEY` set, the client must be given the same
+value via its own `MCP_API_KEY` (see Configuration).
 
-<img width="1723" height="878" alt="image" src="https://github.com/user-attachments/assets/92184616-1bb7-4fc2-8418-23074f6cd481" />
+---
 
-<img width="1724" height="875" alt="image" src="https://github.com/user-attachments/assets/9a0da236-8865-47b8-9e12-2f0fa7086eae" />
+## Screenshots
 
-<img width="1723" height="878" alt="image" src="https://github.com/user-attachments/assets/7a4a7d73-6090-4d63-a0c5-67cf4b66f3fd" />
+<img width="1000" alt="Dashboard — server reachability, per-switch health (BGP/interfaces/LLDP), and a live fabric-health badge"
+  src="https://github.com/user-attachments/assets/418053fd-21d6-41ea-8e23-5b1f7df1fe9e" />
+
+<img width="1000" alt="Fabric view — topology graph of switches with BGP/LLDP adjacencies"
+  src="https://github.com/user-attachments/assets/92184616-1bb7-4fc2-8418-23074f6cd481" />
+
+<img width="1000" alt="AI Console — natural-language tool routing with rich per-tool result widgets"
+  src="https://github.com/user-attachments/assets/9a0da236-8865-47b8-9e12-2f0fa7086eae" />
+
+<img width="1000" alt="Settings — LLM provider selection, live fabric-intent editor, and fabric inventory management"
+  src="https://github.com/user-attachments/assets/7a4a7d73-6090-4d63-a0c5-67cf4b66f3fd" />
+
+---
 
 ## License
 

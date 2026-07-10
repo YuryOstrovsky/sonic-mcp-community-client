@@ -1,8 +1,11 @@
 """Runtime-persisted client settings.
 
-Lives in `backend/settings.json` alongside this module. Stores values the
-operator chose through the UI (LLM provider config, OpenAI API key,
-Ollama host, etc.) so they survive `systemctl restart`.
+Persisted to `backend/data/settings.json` by default (overridable via
+`CLIENT_SETTINGS_PATH`). This path sits inside the Docker/Compose-mounted
+`/app/backend/data` volume, so settings survive container replacement — the
+old `backend/settings.json` location was OUTSIDE the volume and would be lost.
+Stores values the operator chose through the UI (LLM provider config, OpenAI
+API key, Ollama host, etc.) so they survive restarts.
 
 Precedence (highest to lowest):
   1. settings.json (written by the UI)
@@ -10,10 +13,10 @@ Precedence (highest to lowest):
   3. Hardcoded defaults in this module
 
 Security notes:
-  - `settings.json` is in the working directory and written with mode 0600.
+  - The file is written with mode 0600.
   - `.gitignore` excludes it so API keys never end up in the repo.
-  - This server has NO AUTH — anyone who can reach `:5174` can read or
-    change these settings. Intended for trusted VPN / lab networks only.
+  - Access to the settings routes is gated by CLIENT_API_KEY when set; see
+    SECURITY.md for the browser→client→server trust boundaries.
 """
 
 from __future__ import annotations
@@ -28,7 +31,13 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("mcp-client.settings")
 
-_SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
+# Default inside the mounted data volume; override with CLIENT_SETTINGS_PATH.
+_SETTINGS_PATH = Path(
+    os.environ.get(
+        "CLIENT_SETTINGS_PATH",
+        str(Path(__file__).resolve().parent / "data" / "settings.json"),
+    )
+)
 _LOCK = threading.Lock()
 _cache: Optional[Dict[str, Any]] = None
 
@@ -44,6 +53,8 @@ def _read_disk() -> Dict[str, Any]:
 
 
 def _write_disk(data: Dict[str, Any]) -> None:
+    # Ensure the parent dir exists (the data volume may be freshly mounted).
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _SETTINGS_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
     try:
