@@ -82,10 +82,17 @@ key), stored under `./data`.
   Set `MCP_API_KEY` to match the server; set `CLIENT_API_KEY` to gate this
   proxy's sensitive routes. When `CLIENT_API_KEY` is unset the backend logs a
   warning and relies on the localhost bind / reverse proxy.
+- **Sending the client key from the UI:** when `CLIENT_API_KEY` is set, open
+  **Settings → Client authentication** and enter the key. It's held in
+  `sessionStorage` only (cleared on tab close, never written to disk). For
+  shared/multi-user deployments, prefer an **authenticating reverse proxy**
+  (SSO / OAuth2-proxy / Authelia / basic auth) that injects the `Authorization`
+  header, rather than distributing the key to browsers.
 - **External LLM disclosure:** with OpenAI selected, an unmatched NL query
-  sends the query, tool descriptions, and (unless `LLM_INCLUDE_DEVICE_CONTEXT=0`)
-  device context to OpenAI. Use Ollama or disable LLM fallback for fully local
-  operation. Never put credentials or confidential data in NL prompts.
+  sends the query and tool descriptions to OpenAI. Device context (management
+  IPs) is **withheld by default** (`LLM_INCLUDE_DEVICE_CONTEXT=0`); set `1` to
+  opt in. Use Ollama or disable LLM fallback for fully local operation. Never
+  put credentials or confidential data in NL prompts.
 
 See [`SECURITY.md`](./SECURITY.md) for the full policy and private reporting.
 
@@ -170,7 +177,7 @@ All settings are env vars loaded from `.env`:
 | `CLIENT_API_KEY` | — | Gates sensitive `/api` routes (Bearer). Unset = no client auth (logs a warning). A **different** secret from `MCP_API_KEY`. |
 | `CLIENT_CORS_ORIGINS` | — (empty) | Comma-separated allowed origins. Empty = no cross-origin (single-port prod). Vite dev: `http://localhost:5173`. |
 | `CLIENT_SETTINGS_PATH` | `backend/data/settings.json` | Where UI settings persist (inside the mounted volume). |
-| `LLM_INCLUDE_DEVICE_CONTEXT` | `1` | Include device IPs/reachability in external-LLM prompts. Set `0` to withhold. |
+| `LLM_INCLUDE_DEVICE_CONTEXT` | `0` | Include device IPs/reachability in external-LLM prompts. Default withholds them; set `1` to opt in for better tool selection. |
 | `SONIC_MCP_CLIENT_PORT` | `5174` | Port to bind uvicorn to (in Docker this is the `EXPOSE`/`-p` mapping) |
 | `OPENAI_API_KEY` | — | Optional — preferred over the UI-set key if present |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default OpenAI model |
