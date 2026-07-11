@@ -24,6 +24,23 @@ updates:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    # Deferred majors — each needs a dedicated migration, tracked separately.
+    # Remove an entry to let Dependabot propose that major again.
+    ignore:
+      # vite 8 switches to the rolldown bundler, whose native bindings hit the
+      # npm optionalDependencies bug (npm/cli#4828). Hold vite (and its React
+      # plugin, which follows vite's majors) on 7.x for now.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 is the native (Go-port) preview; typescript-eslint peers
+      # still require typescript < 6.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # Tailwind CSS 4 is a CSS-first config-model migration.
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
