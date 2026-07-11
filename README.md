@@ -8,7 +8,12 @@ editable mutation-confirm modal, a command palette, and natural-
 language routing with optional LLM fallback.
 
 This is a **separate product** from the server — use it against any
-compatible MCP endpoint on a trusted network.
+compatible endpoint on a trusted network.
+
+> This UI is one way to drive the server. As of server **v0.2.0** the server
+> also speaks **standard MCP** (stdio + Streamable HTTP at `/mcp`), so you can
+> point Claude Desktop or any MCP agent straight at the server too — the UI and
+> MCP clients share the same tools. This client uses the server's REST API.
 
 - **GitHub (this repo):** https://github.com/YuryOstrovsky/sonic-mcp-community-client
 - **GitHub (server):** https://github.com/YuryOstrovsky/sonic-mcp-community-server
