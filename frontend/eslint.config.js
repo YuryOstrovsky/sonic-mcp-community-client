@@ -32,6 +32,12 @@ export default defineConfig([
       // Missing-dep warnings are already audited explicitly where we
       // diverge from the default; keep the rule visible but non-fatal.
       'react-hooks/exhaustive-deps': 'warn',
+      // New react-compiler advisory rules enabled by eslint-plugin-react-hooks
+      // 7.1's recommended config. They flag patterns this pre-existing codebase
+      // uses intentionally (e.g. state synced inside effects). Keep them visible
+      // as warnings rather than error-blocking CI; revisit as a focused refactor.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/purity': 'warn',
     },
   },
 ])

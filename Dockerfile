@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------
 # Stage 1 — build the React frontend
 # ---------------------------------------------------------------
-FROM node:22-alpine AS frontend-build
+FROM node:26-alpine AS frontend-build
 
 WORKDIR /frontend
 
@@ -27,7 +27,7 @@ RUN npm run build
 # ---------------------------------------------------------------
 # Stage 2 — Python FastAPI runtime
 # ---------------------------------------------------------------
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.title="SONiC MCP Community Client" \
       org.opencontainers.image.description="Web UI + thin API proxy for the SONiC MCP Community Server" \

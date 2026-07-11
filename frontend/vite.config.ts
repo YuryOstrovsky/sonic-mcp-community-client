@@ -18,10 +18,16 @@ export default defineConfig({
     // initial page load isn't dragging ~700 kB through on first paint.
     rollupOptions: {
       output: {
-        manualChunks: {
-          reactflow: ["reactflow"],
-          icons:   ["lucide-react"],
-          misc:    ["cmdk", "sonner", "@tanstack/react-virtual"],
+        // Function form (vite 8 / Rollup 4 no longer accepts the object map in
+        // its types). Same effect: split these heavy libs into named chunks.
+        manualChunks(id) {
+          if (id.includes("/node_modules/reactflow/") || id.includes("/node_modules/@reactflow/")) return "reactflow";
+          if (id.includes("/node_modules/lucide-react/")) return "icons";
+          if (
+            id.includes("/node_modules/cmdk/") ||
+            id.includes("/node_modules/sonner/") ||
+            id.includes("/node_modules/@tanstack/react-virtual/")
+          ) return "misc";
         },
       },
     },
