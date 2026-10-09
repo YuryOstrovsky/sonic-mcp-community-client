@@ -30,7 +30,7 @@ jobs:
           npm run lint
           npm run build
           npm audit --audit-level=high
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Backend ruff + pytest + pip-audit
